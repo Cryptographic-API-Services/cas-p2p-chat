@@ -14,7 +14,7 @@
  *                                Ed25519 signature over (context || sessionId || own sessionKey || kemCiphertext) }
  *   3. each side verifies the other's auth with the peer's identity key, decapsulates the
  *      peer's kemCiphertext, and derives the session keys:
- *        prk     = HKDF-Extract(salt = sessionId,
+ *        prk     = HKDF-SHA512-Extract(salt = sessionId,
  *                               context || X25519(own, peer) || both KEM secrets || both KEM ciphertexts)
  *        sendKey = HKDF-Expand(prk, context || sender's sessionKey, 32), one key per direction.
  *
@@ -35,11 +35,18 @@
  * the handshake, so it can move to a hybrid signature later without exposing today's traffic.
  */
 import { randomBytes } from "node:crypto";
-import { AESWrapper, Blake2Wrapper, Ed25519Wrapper, MlKem1024Wrapper, X25519Wrapper, isCasError } from "cas-typescript-sdk";
+import {
+    AESWrapper,
+    Blake2Wrapper,
+    Ed25519Wrapper,
+    HkdfWrapper,
+    MlKem1024Wrapper,
+    X25519Wrapper,
+    isCasError,
+} from "cas-typescript-sdk";
 import { type Bytes, compare, concat, equal, fromBase64, lengthPrefixed, toBase64, u32, u64, utf8, wipe } from "./bytes.ts";
 import { ProtocolError } from "./errors.ts";
 import { type Identity, fingerprint } from "./identity.ts";
-import { hkdfExpand, hkdfExtract } from "./kdf.ts";
 
 export const PROTOCOL_ID = "cas-p2p-chat/2";
 export const MAX_NAME_LENGTH = 64;
@@ -62,6 +69,7 @@ const ed25519 = new Ed25519Wrapper();
 const blake2 = new Blake2Wrapper();
 const x25519 = new X25519Wrapper();
 const mlKem = new MlKem1024Wrapper();
+const hkdf = new HkdfWrapper();
 
 export interface HelloFrame {
     type: "hello";
@@ -286,9 +294,9 @@ export class Handshake {
             first.ciphertext,
             second.ciphertext,
         );
-        const prk = hkdfExtract(this.sessionId, ikm);
-        const sendKey = hkdfExpand(prk, concat(MESSAGE_KEY_CONTEXT, this.own.sessionKey), KEY_LENGTH);
-        const receiveKey = hkdfExpand(prk, concat(MESSAGE_KEY_CONTEXT, peer.sessionKey), KEY_LENGTH);
+        const prk = hkdf.hkdfSha512Extract(this.sessionId, ikm);
+        const sendKey = hkdf.hkdfSha512Expand(prk, concat(MESSAGE_KEY_CONTEXT, this.own.sessionKey), KEY_LENGTH);
+        const receiveKey = hkdf.hkdfSha512Expand(prk, concat(MESSAGE_KEY_CONTEXT, peer.sessionKey), KEY_LENGTH);
         for (const secret of [ikm, prk, dh, received, sent.sharedSecret]) {
             wipe(secret);
         }

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { hkdfSync, randomBytes } from "node:crypto";
 import { describe, it } from "node:test";
+import { HkdfWrapper } from "cas-typescript-sdk";
 import { fromBase64, toBase64, utf8, fromUtf8 } from "../src/bytes.ts";
 import { ProtocolError } from "../src/errors.ts";
 import { createIdentity, fingerprint, parseIdentity, serializeIdentity } from "../src/identity.ts";
-import { hkdfExpand, hkdfExtract } from "../src/kdf.ts";
 import { type AuthFrame, Handshake, type MessageFrame, Session } from "../src/protocol.ts";
 
 function establish(): { alice: Session; bob: Session; aliceId: ReturnType<typeof createIdentity>; bobId: ReturnType<typeof createIdentity> } {
@@ -24,20 +24,17 @@ function flip<T extends MessageFrame | AuthFrame>(frame: T, field: keyof T & str
     return { ...frame, [field]: toBase64(bytes) };
 }
 
-describe("HKDF-SHA512", () => {
-    it("matches node:crypto for several lengths, salts and infos", () => {
+describe("HKDF-SHA512 (the key schedule's KDF)", () => {
+    it("cas-typescript-sdk's extract + expand matches node:crypto's RFC 5869 HKDF", () => {
+        const hkdf = new HkdfWrapper();
+        // The key schedule's shapes (64-byte salt, 32-byte keys) plus no salt and multi-block output.
         for (const [saltLength, length] of [[64, 32], [0, 64], [13, 100], [64, 200]]) {
             const salt = Array.from(randomBytes(saltLength));
             const ikm = Array.from(randomBytes(97));
             const info = Array.from(randomBytes(40));
             const expected = Array.from(new Uint8Array(hkdfSync("sha512", Buffer.from(ikm), Buffer.from(salt), Buffer.from(info), length)));
-            assert.deepEqual(hkdfExpand(hkdfExtract(salt, ikm), info, length), expected);
+            assert.deepEqual(hkdf.hkdfSha512Expand(hkdf.hkdfSha512Extract(salt, ikm), info, length), expected);
         }
-    });
-
-    it("refuses impossible lengths", () => {
-        assert.throws(() => hkdfExpand(new Array(64).fill(1), [], 0), RangeError);
-        assert.throws(() => hkdfExpand(new Array(64).fill(1), [], 255 * 64 + 1), RangeError);
     });
 });
 

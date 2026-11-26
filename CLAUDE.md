@@ -118,8 +118,8 @@ npm run db:generate -w @cas-p2p-chat/core     # after editing packages/core/src/
 ## Architecture
 
 ```
-packages/core/src/    Plain Node, no Electron: protocol, kdf (HKDF-SHA512), identity, peer-id
-                      (fingerprint ↔ PeerJS ID), signaling-token, ChatNode (runs any FrameLink), TrustStore (= contacts,
+packages/core/src/    Plain Node, no Electron: protocol, identity, peer-id (fingerprint ↔ PeerJS
+                      ID), signaling-token, ChatNode (runs any FrameLink), TrustStore (= contacts,
                       over a ContactRepository), signed directory records, DirectoryClient.
                       Everything here is unit-tested.
 packages/core/src/repositories/  The desktop app's local data: schema.ts (Drizzle tables),
@@ -239,8 +239,9 @@ deploy/azure/         setup.sh (Azure CLI: resource group, identity, registry, C
   both KEM secrets ‖ both KEM ciphertexts)`, the KEM pairs ordered by whose hello sorts first;
   each direction's key is `HKDF-Expand(prk, context ‖ sender's session key, 32)`. Like X-Wing,
   one extract over both secrets, the ciphertexts and (through `sessionId`) the public keys.
-  HKDF-SHA512 is `kdf.ts`, built on the SDK's HMAC-SHA512 (the SDK has no HKDF) and tested
-  against `node:crypto`. Handshake and shared secrets are wiped once the keys are derived.
+  HKDF-SHA512 is the SDK's `HkdfWrapper` (cas-typescript-sdk 2.1.0+, so core requires
+  `^2.1.0`); a test checks it against `node:crypto`'s `hkdfSync`. Handshake and shared secrets
+  are wiped once the keys are derived.
 - Each message is AES-256-GCM under the sender's direction key, with nonce `0⁴ ‖ u64(seq)` and
   AAD `context ‖ sessionId ‖ seq`; the frame is just `{ type, seq, ciphertext }` (ciphertext ‖
   tag). Messages carry no signature: only the two peers hold the keys, which come from an
