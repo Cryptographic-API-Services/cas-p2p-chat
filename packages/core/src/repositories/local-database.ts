@@ -73,12 +73,13 @@ export class LocalDatabase {
 
     /**
      * Opens the database at `file` (":memory:" for a throwaway one), creating it if needed, and
-     * applies pending migrations.
+     * applies pending migrations: those newer than the last one recorded in the database, so
+     * each runs once. `migrations` defaults to packages/core/drizzle (tests pass another).
      */
-    static async open(file: string, key: Bytes): Promise<LocalDatabase> {
+    static async open(file: string, key: Bytes, migrations = migrationsFolder()): Promise<LocalDatabase> {
         const local = new LocalDatabase(file, key);
         try {
-            await local.migrate();
+            await local.migrate(migrations);
             return local;
         } catch (err) {
             local.close();
@@ -150,8 +151,8 @@ export class LocalDatabase {
     }
 
     /** Applies drizzle-kit's pending migrations in one transaction. */
-    private async migrate(): Promise<void> {
-        const config = { migrationsFolder: migrationsFolder(), migrationsTable: MIGRATIONS_TABLE };
+    private async migrate(migrations: string): Promise<void> {
+        const config = { migrationsFolder: migrations, migrationsTable: MIGRATIONS_TABLE };
         await migrate(this.db, async (queries) => {
             this.sqlite.exec("BEGIN IMMEDIATE");
             try {

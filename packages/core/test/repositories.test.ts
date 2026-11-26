@@ -75,6 +75,34 @@ describe("LocalDatabase", () => {
         assert.equal(tables.length, 3);
     });
 
+    it("upgrades an existing database with only the new migrations, keeping its data", async () => {
+        // The shipped migrations, then one more, as a later release would have.
+        const migrations = path.join(dir, "migrations");
+        fs.cpSync(path.join(import.meta.dirname, "..", "drizzle"), migrations, { recursive: true });
+        const first = await LocalDatabase.open(file, key, migrations);
+        opened.push(first);
+        await new SqliteContactRepository(first).save(contact(alice, "Alice"));
+        first.close();
+
+        const journalFile = path.join(migrations, "meta", "_journal.json");
+        const journal = JSON.parse(fs.readFileSync(journalFile, "utf8")) as { entries: Array<{ idx: number; when: number; tag: string }> };
+        const last = journal.entries.at(-1)!;
+        journal.entries.push({ ...last, idx: last.idx + 1, when: last.when + 1_000, tag: "9999_later" });
+        fs.writeFileSync(journalFile, JSON.stringify(journal));
+        fs.writeFileSync(path.join(migrations, "9999_later.sql"), "CREATE TABLE `later` (`id` integer PRIMARY KEY NOT NULL);");
+
+        // The second start finds nothing left to apply.
+        for (let start = 0; start < 2; start++) {
+            const local = await LocalDatabase.open(file, key, migrations);
+            opened.push(local);
+            assert.deepEqual(await new SqliteContactRepository(local).all(), [contact(alice, "Alice")]);
+            local.close();
+        }
+        const disk = raw();
+        assert.equal((disk.prepare("SELECT count(*) AS n FROM __drizzle_migrations").get() as { n: number }).n, journal.entries.length);
+        assert.ok(disk.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'later'").get());
+    });
+
     it("refuses a database migrated by a newer version of the app", async () => {
         (await open()).close();
         raw().exec(`INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('future', '${Date.now() + 10 ** 12}')`);

@@ -278,6 +278,15 @@ deploy/azure/         setup.sh (Azure CLI: resource group, identity, registry, C
   drizzle-kit's pending migrations from `packages/core/drizzle` (found by walking up from the
   module, so it works from `src/`, `dist/` and inside `app.asar`) in one transaction, and
   refuses a database migrated by a newer app version (Drizzle alone would skip unknown ones).
+- **Migrations run once each**: Drizzle applies every migration whose drizzle-kit timestamp is
+  newer than the last one recorded in `__drizzle_migrations`, so an upgrade runs only the new
+  ones on top of existing data (`repositories.test.ts` checks this; `LocalDatabase.open`'s
+  third argument swaps in a test migrations folder). Two rules follow. Generate migrations on
+  an up-to-date `main` (regenerate after rebasing): one dated before a migration that already
+  shipped is skipped. And never make a migration tolerant with `IF NOT EXISTS`: a "table
+  already exists" error means the database doesn't match its recorded history (as happened to
+  a profile from a pre-Drizzle build of this branch), and starting anyway would fail later on
+  the mismatched schema.
 - **Sealing**: every row's content is sealed with AES-256-GCM-SIV (cas-typescript-sdk) under a
   subkey of `storage-key.json`'s key, with AAD of a context string plus the row's identifying
   columns. Rows are found by HMAC-SHA512 lookup IDs, a different context per table, so the
