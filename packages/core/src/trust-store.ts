@@ -23,8 +23,10 @@ interface Entry {
  */
 export class TrustStore {
     private readonly entries = new Map<string, Entry>();
+    private readonly file: string;
 
-    constructor(private readonly file: string) {
+    constructor(file: string) {
+        this.file = file;
         if (!fs.existsSync(file)) {
             return;
         }

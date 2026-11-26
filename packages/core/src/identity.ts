@@ -1,5 +1,5 @@
 import { Blake2Wrapper, Ed25519Wrapper } from "cas-typescript-sdk";
-import { Bytes, concat, fromBase64, toBase64, utf8 } from "./bytes";
+import { type Bytes, concat, fromBase64, toBase64, utf8 } from "./bytes.ts";
 
 /** A device's long-term Ed25519 signing key pair. Its public key is the device's identity. */
 export interface Identity {

@@ -1,19 +1,15 @@
 {
-  // Main process, preload, protocol core, directory server and tests: CommonJS for Electron and Node.
+  // Shared by every Node-side project (core, server, desktop main process).
   "compilerOptions": {
     "target": "ES2023",
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "lib": ["ES2023"],
     "types": ["node"],
-    "rootDir": ".",
-    "outDir": "dist",
     "strict": true,
     "noUnusedLocals": true,
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true,
-    "sourceMap": true
-  },
-  "include": ["src/core/**/*.ts", "src/main/**/*.ts", "src/server/**/*.ts", "src/shared/**/*.d.ts", "test/**/*.ts"]
+    "skipLibCheck": true
+  }
 }

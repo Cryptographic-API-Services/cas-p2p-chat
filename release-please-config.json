@@ -1,0 +1,32 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "pull-request-title-pattern": "chore: release ${version}",
+  "packages": {
+    ".": {
+      "release-type": "node",
+      "package-name": "cas-p2p-chat",
+      "include-component-in-tag": false,
+      "changelog-path": "CHANGELOG.md",
+      "exclude-paths": ["apps/server", "deploy", ".github/workflows/deploy-server.yml"],
+      "extra-files": [
+        { "type": "json", "path": "apps/desktop/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "package-lock.json", "jsonpath": "$.packages['apps/desktop'].version" }
+      ],
+      "changelog-sections": [
+        { "type": "feat", "section": "Added" },
+        { "type": "changed", "section": "Changed" },
+        { "type": "deprecated", "section": "Deprecated" },
+        { "type": "fix", "section": "Fixed" },
+        { "type": "security", "section": "Security" },
+        { "type": "docs", "section": "Documentation" },
+        { "type": "perf", "section": "Other" },
+        { "type": "refactor", "section": "Other" },
+        { "type": "test", "section": "Other" },
+        { "type": "ci", "section": "Other" },
+        { "type": "build", "section": "Other" },
+        { "type": "chore", "section": "Other" },
+        { "type": "revert", "section": "Other" }
+      ]
+    }
+  }
+}

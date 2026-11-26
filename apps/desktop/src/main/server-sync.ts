@@ -1,6 +1,6 @@
-import { DirectoryClient, DirectorySearch, ServerConfig } from "../core/directory-client";
-import type { Identity } from "../core/identity";
-import { createSignalingToken } from "../core/signaling-token";
+import { DirectoryClient, DirectorySearch, ServerConfig } from "@cas-p2p-chat/core/directory-client";
+import type { Identity } from "@cas-p2p-chat/core/identity";
+import { createSignalingToken } from "@cas-p2p-chat/core/signaling-token";
 import { SignalingStatus, WebRtcBridge } from "./webrtc-bridge";
 
 export interface ServerState {

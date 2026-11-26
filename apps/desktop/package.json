@@ -1,0 +1,44 @@
+{
+  "name": "@cas-p2p-chat/desktop",
+  "productName": "CAS P2P Chat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "End-to-end encrypted peer-to-peer desktop chat over WebRTC (Electron, Vue, Vuetify, Tailwind).",
+  "main": "dist/main/main.js",
+  "type": "commonjs",
+  "license": "ISC",
+  "scripts": {
+    "postinstall": "node scripts/ensure-electron.mjs",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && npm run build:main && npm run build:renderer",
+    "build:main": "tsc -b",
+    "build:renderer": "vue-tsc -p tsconfig.renderer.json && vite build --logLevel warn",
+    "start": "npm run build && electron .",
+    "start:alice": "npm run build && electron . --profile=alice --name=Alice --server=http://127.0.0.1:8787",
+    "start:bob": "npm run build && electron . --profile=bob --name=Bob --server=http://127.0.0.1:8787",
+    "smoke": "npm run build && electron . --smoke-test",
+    "dist": "electron-builder --publish never"
+  },
+  "dependencies": {
+    "@cas-p2p-chat/core": "0.1.0"
+  },
+  "devDependencies": {
+    "@fontsource/roboto": "^5.3.0",
+    "@mdi/js": "^7.4.47",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/node": "^26.6.11",
+    "@vitejs/plugin-vue": "^6.0.11",
+    "electron": "45.5.0",
+    "electron-builder": "^26.18.1",
+    "peerjs": "^1.5.5",
+    "tailwindcss": "^4.3.5",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.8",
+    "vite-plugin-vuetify": "^2.1.3",
+    "vue": "^3.5.46",
+    "vue-tsc": "^3.3.14",
+    "vuetify": "^4.3.4"
+  },
+  "author": "Mike Mulchrone <mikemulchrone987@gmail.com>",
+  "homepage": "https://github.com/Cryptographic-API-Services/cas-p2p-chat"
+}

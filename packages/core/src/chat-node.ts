@@ -1,8 +1,8 @@
 import { EventEmitter } from "node:events";
-import type { FrameLink } from "./frame-link";
-import { Identity, fingerprint } from "./identity";
-import { Direction, PeerConnection, validateText } from "./peer-connection";
-import { validateName } from "./protocol";
+import type { FrameLink } from "./frame-link.ts";
+import { type Identity, fingerprint } from "./identity.ts";
+import { type Direction, PeerConnection, validateText } from "./peer-connection.ts";
+import { validateName } from "./protocol.ts";
 
 export interface PeerSummary {
     id: string;
@@ -48,9 +48,11 @@ export class ChatNode extends EventEmitter<ChatNodeEvents> {
     private readonly maxConnections: number;
     private readonly handshakeTimeoutMs: number;
     private nextId = 1;
+    private readonly options: ChatNodeOptions;
 
-    constructor(private readonly options: ChatNodeOptions) {
+    constructor(options: ChatNodeOptions) {
         super();
+        this.options = options;
         this.name = validateName(options.name);
         this.fingerprint = fingerprint(options.identity.publicKey);
         this.maxConnections = options.maxConnections ?? 32;

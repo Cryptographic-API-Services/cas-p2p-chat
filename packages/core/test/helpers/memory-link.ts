@@ -1,4 +1,4 @@
-import type { FrameLink, FrameLinkHandlers } from "../../src/core/frame-link";
+import type { FrameLink, FrameLinkHandlers } from "../../src/frame-link.ts";
 
 /**
  * One end of an in-memory link. Frames go through JSON and are delivered asynchronously and in
@@ -10,7 +10,11 @@ export class MemoryLink implements FrameLink {
     private readonly inbox: string[] = [];
     private closed = false;
 
-    constructor(readonly label: string) {}
+    readonly label: string;
+
+    constructor(label: string) {
+        this.label = label;
+    }
 
     start(handlers: FrameLinkHandlers): void {
         this.handlers = handlers;

@@ -1,12 +1,12 @@
-import express, { NextFunction, Request, Response } from "express";
+import express, { type NextFunction, type Request, type Response } from "express";
 import * as http from "node:http";
-import { verifyDeletion, verifyRegistration } from "../core/directory-record";
-import type { RTCIceServerLike } from "../core/directory-client";
-import { ProtocolError } from "../core/errors";
-import { normalizeFingerprint } from "../core/peer-id";
-import { PeerStore, StoredPeer } from "./peer-store";
-import { rateLimit } from "./rate-limit";
-import { Presence, SIGNALING_KEY, SIGNALING_PATH, attachSignaling } from "./signaling";
+import { verifyDeletion, verifyRegistration } from "@cas-p2p-chat/core/directory-record";
+import type { RTCIceServerLike } from "@cas-p2p-chat/core/directory-client";
+import { ProtocolError } from "@cas-p2p-chat/core/errors";
+import { normalizeFingerprint } from "@cas-p2p-chat/core/peer-id";
+import type { PeerStore, StoredPeer } from "./peer-store.ts";
+import { rateLimit } from "./rate-limit.ts";
+import { Presence, SIGNALING_KEY, SIGNALING_PATH, attachSignaling } from "./signaling.ts";
 
 export const MIN_QUERY_LENGTH = 2;
 export const MAX_RESULTS = 20;
@@ -80,32 +80,31 @@ export function createChatServer(options: ChatServerOptions): { app: express.Exp
     }
     app.use(express.json({ limit: "4kb" }));
 
-    app.get("/health", (_req, res) => {
-        res.json({ ok: true, listed: store.count(), online: presence.size });
+    app.get("/health", async (_req, res) => {
+        res.json({ ok: true, listed: await store.count(), online: presence.size });
     });
 
     app.get("/v1/config", (_req, res) => {
         res.json({ iceServers, signalingPath: SIGNALING_PATH, signalingKey: SIGNALING_KEY });
     });
 
-    app.get("/v1/peers", (req, res) => {
+    app.get("/v1/peers", async (req, res) => {
         const query = typeof req.query.q === "string" ? req.query.q.trim() : "";
         if ([...query].length < MIN_QUERY_LENGTH || query.length > 64) {
             res.status(400).json({ error: `search for a name of ${MIN_QUERY_LENGTH} to 64 characters` });
             return;
         }
         // Online peers first, so the people you can reach right now show up.
-        const peers = store
-            .search(query, MAX_RESULTS * 3)
+        const peers = (await store.search(query, MAX_RESULTS * 3))
             .map(view)
             .sort((a, b) => Number(b.online) - Number(a.online))
             .slice(0, MAX_RESULTS);
         res.json({ peers });
     });
 
-    app.get("/v1/peers/:fingerprint", (req, res) => {
+    app.get("/v1/peers/:fingerprint", async (req, res) => {
         const fingerprint = normalizeFingerprint(String(req.params.fingerprint));
-        const peer = fingerprint ? store.get(fingerprint) : null;
+        const peer = fingerprint ? await store.get(fingerprint) : null;
         if (!peer) {
             res.status(404).json({ error: "no such peer" });
             return;
@@ -113,19 +112,19 @@ export function createChatServer(options: ChatServerOptions): { app: express.Exp
         res.json(view(peer));
     });
 
-    app.post("/v1/peers", (req, res) => {
+    app.post("/v1/peers", async (req, res) => {
         const verified = verifyRegistration(req.body, now());
-        const result = store.register(verified, now());
+        const result = await store.register(verified, now());
         if (result === "stale") {
             res.status(409).json({ error: "a registration with the same or a newer timestamp was already accepted" });
             return;
         }
-        res.status(result === "created" ? 201 : 200).json(view(store.get(verified.fingerprint)!));
+        res.status(result === "created" ? 201 : 200).json(view((await store.get(verified.fingerprint))!));
     });
 
-    app.delete("/v1/peers", (req, res) => {
+    app.delete("/v1/peers", async (req, res) => {
         const { fingerprint, timestamp } = verifyDeletion(req.body, now());
-        const result = store.delete(fingerprint, timestamp, now());
+        const result = await store.delete(fingerprint, timestamp, now());
         if (result === "not-found") {
             res.status(404).json({ error: "no such peer" });
         } else if (result === "stale") {

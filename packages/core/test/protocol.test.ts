@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { fromBase64, toBase64, utf8, fromUtf8 } from "../src/core/bytes";
-import { ProtocolError } from "../src/core/errors";
-import { createIdentity, fingerprint, parseIdentity, serializeIdentity } from "../src/core/identity";
-import { Handshake, MessageFrame, Session } from "../src/core/protocol";
+import { fromBase64, toBase64, utf8, fromUtf8 } from "../src/bytes.ts";
+import { ProtocolError } from "../src/errors.ts";
+import { createIdentity, fingerprint, parseIdentity, serializeIdentity } from "../src/identity.ts";
+import { Handshake, type MessageFrame, Session } from "../src/protocol.ts";
 
 function establish(): { alice: Session; bob: Session; aliceId: ReturnType<typeof createIdentity>; bobId: ReturnType<typeof createIdentity> } {
     const aliceId = createIdentity();

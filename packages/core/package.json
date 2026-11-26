@@ -1,0 +1,27 @@
+{
+  "name": "@cas-p2p-chat/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Protocol, identity, signed directory records and signaling tokens, shared by the desktop app and the server.",
+  "type": "module",
+  "license": "ISC",
+  "exports": {
+    "./*": {
+      "types": "./src/*.ts",
+      "cas-source": "./src/*.ts",
+      "default": "./dist/src/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "test": "node --test \"test/**/*.test.ts\""
+  },
+  "dependencies": {
+    "cas-typescript-sdk": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.11",
+    "typescript": "~6.0.3"
+  }
+}

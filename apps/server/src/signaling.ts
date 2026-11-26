@@ -2,8 +2,8 @@ import type { Express } from "express";
 import type { IncomingMessage, Server } from "node:http";
 import { ExpressPeerServer } from "peer";
 import { WebSocketServer, type ServerOptions } from "ws";
-import { peerIdToFingerprint } from "../core/peer-id";
-import { checkSignalingToken } from "../core/signaling-token";
+import { peerIdToFingerprint } from "@cas-p2p-chat/core/peer-id";
+import { checkSignalingToken } from "@cas-p2p-chat/core/signaling-token";
 
 export const SIGNALING_PATH = "/signal";
 export const SIGNALING_KEY = "cas-p2p-chat";

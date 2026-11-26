@@ -1,4 +1,4 @@
-// Builds the renderer (Vue + Vuetify + Tailwind) into dist/src/renderer, next to the
+// Builds the renderer (Vue + Vuetify + Tailwind) into dist/renderer, next to the
 // compiled main process, which loads it with BrowserWindow.loadFile.
 import tailwindcss from "@tailwindcss/vite";
 import vue from "@vitejs/plugin-vue";
@@ -12,7 +12,7 @@ export default defineConfig({
     base: "./",
     plugins: [vue(), vuetify({ autoImport: true }), tailwindcss()],
     build: {
-        outDir: fileURLToPath(new URL("./dist/src/renderer", import.meta.url)),
+        outDir: fileURLToPath(new URL("./dist/renderer", import.meta.url)),
         emptyOutDir: true,
         target: "chrome140",
         // Electron loads everything from disk: no need for the preload polyfill.

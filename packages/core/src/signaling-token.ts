@@ -1,15 +1,15 @@
 /**
  * Proof that a device owns its signaling ID. The PeerJS server on its own lets anyone claim any
- * ID; ours (src/server/signaling.ts) only accepts a connection whose token is a fresh Ed25519
+ * ID; ours (apps/server/src/signaling.ts) only accepts a connection whose token is a fresh Ed25519
  * signature by the identity key whose fingerprint the ID is. Nobody can squat someone else's ID.
  *
  * Token format: "<timestamp base36>.<identity key base64url>.<signature base64url>", where the
  * signature covers context ‖ len‖peerId ‖ len‖timestamp.
  */
 import { Ed25519Wrapper } from "cas-typescript-sdk";
-import { concat, lengthPrefixed, u64, utf8 } from "./bytes";
-import { Identity, fingerprint } from "./identity";
-import { fingerprintToPeerId } from "./peer-id";
+import { concat, lengthPrefixed, u64, utf8 } from "./bytes.ts";
+import { type Identity, fingerprint } from "./identity.ts";
+import { fingerprintToPeerId } from "./peer-id.ts";
 
 const TOKEN_CONTEXT = utf8("cas-p2p-chat/v1/signaling-token");
 /** A token stays valid this long, so a dropped connection can resume with the same token. */

@@ -1,5 +1,5 @@
 /**
- * Signed records for the "find someone by name" directory (src/server). A record holds a display
+ * Signed records for the "find someone by name" directory (apps/server). A record holds a display
  * name and an identity key, and nothing about where the device is: no IP addresses, no ports.
  * Peers are dialed by fingerprint through signaling instead.
  *
@@ -8,10 +8,10 @@
  * server and the app both verify records with the functions below.
  */
 import { Ed25519Wrapper } from "cas-typescript-sdk";
-import { Bytes, concat, fromBase64, lengthPrefixed, toBase64, u64, utf8 } from "./bytes";
-import { ProtocolError } from "./errors";
-import { Identity, fingerprint } from "./identity";
-import { validateName } from "./protocol";
+import { type Bytes, concat, fromBase64, lengthPrefixed, toBase64, u64, utf8 } from "./bytes.ts";
+import { ProtocolError } from "./errors.ts";
+import { type Identity, fingerprint } from "./identity.ts";
+import { validateName } from "./protocol.ts";
 
 // v2: v1 records also carried a port and LAN IP addresses.
 const REGISTRATION_CONTEXT = utf8("cas-p2p-chat/v2/directory-registration");

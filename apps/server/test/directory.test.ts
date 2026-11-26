@@ -4,24 +4,25 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { after, before, beforeEach, describe, it } from "node:test";
 import express from "express";
-import { toBase64 } from "../src/core/bytes";
-import { DirectoryClient, normalizeServerUrl } from "../src/core/directory-client";
+import { toBase64 } from "@cas-p2p-chat/core/bytes";
+import { DirectoryClient, normalizeServerUrl } from "@cas-p2p-chat/core/directory-client";
 import {
     MAX_CLOCK_SKEW_MS,
     createDeletion,
     createRegistration,
     verifyDeletion,
     verifyRegistration,
-} from "../src/core/directory-record";
-import { createIdentity, fingerprint } from "../src/core/identity";
-import { fingerprintToPeerId, normalizeFingerprint, peerIdToFingerprint } from "../src/core/peer-id";
-import { SIGNALING_TOKEN_MAX_AGE_MS, checkSignalingToken, createSignalingToken } from "../src/core/signaling-token";
-import { createChatServer } from "../src/server/app";
-import { PeerStore } from "../src/server/peer-store";
-import { verifySignalingRequest } from "../src/server/signaling";
+} from "@cas-p2p-chat/core/directory-record";
+import { createIdentity, fingerprint } from "@cas-p2p-chat/core/identity";
+import { fingerprintToPeerId, normalizeFingerprint, peerIdToFingerprint } from "@cas-p2p-chat/core/peer-id";
+import { SIGNALING_TOKEN_MAX_AGE_MS, checkSignalingToken, createSignalingToken } from "@cas-p2p-chat/core/signaling-token";
+import { createChatServer } from "../src/app.ts";
+import { type DatabaseHandle, openDatabase } from "../src/db.ts";
+import { PeerStore } from "../src/peer-store.ts";
+import { peers } from "../src/schema.ts";
+import { verifySignalingRequest } from "../src/signaling.ts";
 
 async function listen(server: Server): Promise<string> {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -39,6 +40,18 @@ async function call(url: string, body?: unknown, method = "POST"): Promise<{ sta
 }
 
 const IP_PATTERN = /\b\d{1,3}(\.\d{1,3}){3}\b|::/;
+
+// One in-memory PostgreSQL (PGlite) for the whole file; suites empty it between tests.
+let database: DatabaseHandle;
+before(async () => {
+    database = await openDatabase("pglite:memory");
+});
+after(() => database.close());
+
+async function emptyStore(options?: ConstructorParameters<typeof PeerStore>[1]): Promise<PeerStore> {
+    await database.db.delete(peers);
+    return new PeerStore(database.db, options);
+}
 
 describe("peer IDs and fingerprints", () => {
     it("map fingerprints to PeerJS IDs and back", () => {
@@ -137,7 +150,7 @@ describe("chat server API", () => {
     beforeEach(async () => {
         server?.close();
         now = Date.now();
-        store = new PeerStore(":memory:");
+        store = await emptyStore();
         const chat = createChatServer({
             store,
             signaling: false,
@@ -181,7 +194,7 @@ describe("chat server API", () => {
         assert.equal((await fetch(`${url}/v1/peers/${compact}`)).status, 200);
         assert.equal((await fetch(`${url}/v1/peers/${"0".repeat(32)}`)).status, 404);
 
-        assert.doesNotMatch(JSON.stringify(store.list()), IP_PATTERN);
+        assert.doesNotMatch(JSON.stringify(await store.list()), IP_PATTERN);
     });
 
     it("refuses replays, stale timestamps, bad signatures, extra fields and junk", async () => {
@@ -210,7 +223,7 @@ describe("chat server API", () => {
         await call(`${url}/v1/peers`, record);
         now += 10;
         assert.equal((await call(`${url}/v1/peers`, createDeletion(alice, now), "DELETE")).status, 204);
-        assert.equal(store.count(), 0);
+        assert.equal(await store.count(), 0);
         assert.equal((await call(`${url}/v1/peers`, record)).status, 409, "replayed registration");
         assert.equal((await call(`${url}/v1/peers`, createDeletion(alice, now + 1), "DELETE")).status, 404);
         assert.equal((await call(`${url}/v1/peers`, createRegistration(alice, "Alice", now + 2))).status, 201);
@@ -218,45 +231,34 @@ describe("chat server API", () => {
 });
 
 describe("peer store", () => {
-    it("persists, evicts the least recently seen, and purges stale listings", () => {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cas-p2p-chat-store-"));
-        const file = path.join(dir, "directory.db");
-        try {
-            const t = Date.now();
-            const store = new PeerStore(file, { maxPeers: 2, retentionMs: 1_000 });
-            [0, 1, 2].forEach((i) => store.register(verifyRegistration(createRegistration(createIdentity(), `P${i}`, t)), t + i));
-            assert.deepEqual(store.list().map((p) => p.record.name), ["P2", "P1"], "P0 was evicted");
-            store.close();
-
-            const reopened = new PeerStore(file, { retentionMs: 1_000 });
-            assert.equal(reopened.count(), 2);
-            reopened.purge(t + 10_000);
-            assert.equal(reopened.count(), 0);
-            reopened.close();
-        } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+    it("evicts the least recently seen, and purges stale listings", async () => {
+        const store = await emptyStore({ maxPeers: 2, retentionMs: 1_000 });
+        const t = Date.now();
+        for (const i of [0, 1, 2]) {
+            await store.register(verifyRegistration(createRegistration(createIdentity(), `P${i}`, t)), t + i);
         }
+        assert.deepEqual((await store.list()).map((p) => p.record.name), ["P2", "P1"], "P0 was evicted");
+        await store.purge(t + 10_000);
+        assert.equal(await store.count(), 0);
     });
 
-    it("drops an old (schema 1) database that stored IP addresses", () => {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cas-p2p-chat-store-"));
-        const file = path.join(dir, "directory.db");
-        try {
-            const old = new DatabaseSync(file);
-            old.exec(`CREATE TABLE peers (fingerprint TEXT PRIMARY KEY, record TEXT, observed_address TEXT,
-                      timestamp INTEGER, first_seen INTEGER, last_seen INTEGER, deleted_at INTEGER);
-                      INSERT INTO peers VALUES ('F', '{"lanAddresses":["192.168.1.5"]}', '203.0.113.9', 1, 1, 1, NULL);`);
-            old.close();
+    it("accepts exactly one of several concurrent copies of a registration", async () => {
+        const store = await emptyStore();
+        const verified = verifyRegistration(createRegistration(createIdentity(), "Alice"));
+        const results = await Promise.all([1, 2, 3, 4, 5].map(() => store.register(verified, Date.now())));
+        assert.deepEqual(results.sort(), ["created", "stale", "stale", "stale", "stale"]);
+    });
 
-            const store = new PeerStore(file);
-            assert.equal(store.count(), 0);
-            store.close();
-            const check = new DatabaseSync(file);
-            const columns = (check.prepare("PRAGMA table_info(peers)").all() as Array<{ name: string }>).map((c) => c.name);
-            const rows = JSON.stringify(check.prepare("SELECT * FROM peers").all());
-            check.close();
-            assert.ok(!columns.includes("observed_address"));
-            assert.doesNotMatch(rows, IP_PATTERN);
+    it("persists in a PGlite directory", async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cas-p2p-chat-store-"));
+        try {
+            const first = await openDatabase(`pglite:${dir}`);
+            await new PeerStore(first.db).register(verifyRegistration(createRegistration(createIdentity(), "Alice")), Date.now());
+            await first.close();
+
+            const reopened = await openDatabase(`pglite:${dir}`);
+            assert.deepEqual((await new PeerStore(reopened.db).list()).map((p) => p.record.name), ["Alice"]);
+            await reopened.close();
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });
         }
@@ -267,7 +269,7 @@ describe("DirectoryClient", () => {
     let server: Server;
     let url: string;
     before(async () => {
-        server = createChatServer({ store: new PeerStore(":memory:"), signaling: false }).server;
+        server = createChatServer({ store: await emptyStore(), signaling: false }).server;
         url = await listen(server);
     });
     after(() => server.close());

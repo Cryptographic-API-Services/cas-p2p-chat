@@ -1,10 +1,10 @@
 import { BrowserWindow, ipcMain } from "electron";
 import { EventEmitter } from "node:events";
 import * as path from "node:path";
-import type { ChatNode } from "../core/chat-node";
-import { ProtocolError } from "../core/errors";
-import { FrameLink, FrameLinkHandlers, MAX_FRAME_BYTES } from "../core/frame-link";
-import { peerIdToFingerprint } from "../core/peer-id";
+import type { ChatNode } from "@cas-p2p-chat/core/chat-node";
+import { ProtocolError } from "@cas-p2p-chat/core/errors";
+import { FrameLink, FrameLinkHandlers, MAX_FRAME_BYTES } from "@cas-p2p-chat/core/frame-link";
+import { peerIdToFingerprint } from "@cas-p2p-chat/core/peer-id";
 
 export type SignalingStatus = "off" | "connecting" | "online" | "error";
 

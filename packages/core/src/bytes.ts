@@ -1,4 +1,4 @@
-import { ProtocolError } from "./errors";
+import { ProtocolError } from "./errors.ts";
 
 /** cas-typescript-sdk passes bytes across its native boundary as plain number arrays. */
 export type Bytes = number[];

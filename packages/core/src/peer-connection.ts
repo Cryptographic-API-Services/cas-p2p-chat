@@ -1,9 +1,9 @@
 import { EventEmitter } from "node:events";
-import { Bytes, fromUtf8, utf8 } from "./bytes";
-import { ProtocolError } from "./errors";
-import type { FrameLink } from "./frame-link";
-import type { Identity } from "./identity";
-import { Handshake, PeerIdentity, Session } from "./protocol";
+import { type Bytes, fromUtf8, utf8 } from "./bytes.ts";
+import { ProtocolError } from "./errors.ts";
+import type { FrameLink } from "./frame-link.ts";
+import type { Identity } from "./identity.ts";
+import { Handshake, type PeerIdentity, Session } from "./protocol.ts";
 
 export const MAX_TEXT_LENGTH = 16_000;
 const MAX_BYE_REASON_LENGTH = 200;
@@ -62,15 +62,13 @@ export class PeerConnection extends EventEmitter<PeerConnectionEvents> {
     private session: Session | null = null;
     private readonly handshakeTimer: NodeJS.Timeout;
     private closed = false;
+    private readonly link: FrameLink;
+    readonly direction: Direction;
 
-    constructor(
-        private readonly link: FrameLink,
-        identity: Identity,
-        name: string,
-        readonly direction: Direction,
-        handshakeTimeoutMs = 10_000,
-    ) {
+    constructor(link: FrameLink, identity: Identity, name: string, direction: Direction, handshakeTimeoutMs = 10_000) {
         super();
+        this.link = link;
+        this.direction = direction;
         this.handshake = new Handshake(identity, name);
         link.start({
             frame: (frame) => this.onFrame(frame),

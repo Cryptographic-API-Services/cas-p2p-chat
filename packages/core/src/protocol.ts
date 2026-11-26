@@ -22,9 +22,9 @@
  */
 import { randomBytes } from "node:crypto";
 import { Blake2Wrapper, Ed25519Wrapper, HpkeWrapper, isCasError } from "cas-typescript-sdk";
-import { Bytes, compare, concat, equal, fromBase64, lengthPrefixed, toBase64, u64, utf8, wipe } from "./bytes";
-import { ProtocolError } from "./errors";
-import { Identity, fingerprint } from "./identity";
+import { type Bytes, compare, concat, equal, fromBase64, lengthPrefixed, toBase64, u64, utf8, wipe } from "./bytes.ts";
+import { ProtocolError } from "./errors.ts";
+import { type Identity, fingerprint } from "./identity.ts";
 
 export const PROTOCOL_ID = "cas-p2p-chat/1";
 export const MAX_NAME_LENGTH = 64;
@@ -141,8 +141,10 @@ export class Handshake {
     private peer: HelloFields | null = null;
     private sessionId: Bytes | null = null;
     private finished = false;
+    private readonly identity: Identity;
 
-    constructor(private readonly identity: Identity, name: string) {
+    constructor(identity: Identity, name: string) {
+        this.identity = identity;
         // The key pair's random infoStr is ignored: messages use the fixed HPKE_INFO.
         const keyPair = hpke.generateKeyPair();
         this.sessionSecretKey = keyPair.secretKey;
@@ -227,14 +229,16 @@ export class Session {
     private sendSeq = 0;
     private recvSeq = 0;
     private destroyed = false;
+    private readonly identity: Identity;
+    private readonly ownSessionKey: Bytes;
+    private readonly sessionSecretKey: Bytes;
+    readonly sessionId: Bytes;
 
-    constructor(
-        private readonly identity: Identity,
-        private readonly ownSessionKey: Bytes,
-        private readonly sessionSecretKey: Bytes,
-        peer: HelloFields,
-        readonly sessionId: Bytes,
-    ) {
+    constructor(identity: Identity, ownSessionKey: Bytes, sessionSecretKey: Bytes, peer: HelloFields, sessionId: Bytes) {
+        this.identity = identity;
+        this.ownSessionKey = ownSessionKey;
+        this.sessionSecretKey = sessionSecretKey;
+        this.sessionId = sessionId;
         this.peerSessionKey = peer.sessionKey;
         this.peer = { name: peer.name, identityKey: peer.identityKey, fingerprint: fingerprint(peer.identityKey) };
     }

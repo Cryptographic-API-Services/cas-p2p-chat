@@ -1,0 +1,54 @@
+# Packages the desktop app: `npm run dist -w @cas-p2p-chat/desktop` (after `npm run build`).
+# The release workflow (.github/workflows/release.yml) runs it on Windows, macOS and Linux.
+appId: com.mtmulch.cas-p2p-chat
+productName: CAS P2P Chat
+artifactName: cas-p2p-chat-${version}-${os}-${arch}.${ext}
+directories:
+  output: release
+files:
+  - dist/**/*
+  - "!**/*.tsbuildinfo"
+  - package.json
+  # The core package is consumed through its compiled dist/src only.
+  - "!**/node_modules/@cas-p2p-chat/core/{src,test,dist/test}/**"
+  - "!**/node_modules/@cas-p2p-chat/core/tsconfig.json"
+# cas-typescript-sdk ships prebuilt N-API binaries for every platform: nothing to rebuild for
+# Electron, and a .node file can't load from inside the asar archive.
+npmRebuild: false
+asarUnpack:
+  - "**/*.node"
+
+# Each platform keeps only its own SDK binary. Every build is x64: the SDK has no arm64 binary
+# for macOS, Windows or Linux yet, so Apple Silicon Macs run the app under Rosetta 2.
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  files:
+    - "!**/node_modules/cas-typescript-sdk/*.{darwin,linux}-*.node"
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+mac:
+  category: public.app-category.social-networking
+  target:
+    - target: dmg
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  # Unsigned until there's an Apple Developer ID (see README, "Installing a release").
+  identity: null
+  files:
+    - "!**/node_modules/cas-typescript-sdk/*.{win32,linux}-*.node"
+linux:
+  # The default is the package name, which is scoped (@cas-p2p-chat/desktop).
+  executableName: cas-p2p-chat
+  category: Network;Chat
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  maintainer: Mike Mulchrone <mikemulchrone987@gmail.com>
+  files:
+    - "!**/node_modules/cas-typescript-sdk/*.{win32,darwin}-*.node"

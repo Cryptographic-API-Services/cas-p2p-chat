@@ -1,6 +1,6 @@
-import { createDeletion, createRegistration, verifyRegistration } from "./directory-record";
-import type { Identity } from "./identity";
-import { fingerprint } from "./identity";
+import { createDeletion, createRegistration, verifyRegistration } from "./directory-record.ts";
+import type { Identity } from "./identity.ts";
+import { fingerprint } from "./identity.ts";
 
 /** A directory search result whose record verified. Only `online` and `lastSeen` are the server's word. */
 export interface DirectoryEntry {
@@ -59,15 +59,19 @@ function validIceServers(value: unknown): RTCIceServerLike[] {
 }
 
 /**
- * Talks to the server's directory API (src/server). Treats the server as untrusted: every
+ * Talks to the server's directory API (apps/server). Treats the server as untrusted: every
  * record it returns is verified against the peer's own signature, and fingerprints are
  * recomputed here.
  */
 export class DirectoryClient {
     readonly baseUrl: string;
     private readonly ownFingerprint: string;
+    private readonly identity: Identity;
+    private readonly timeoutMs: number;
 
-    constructor(baseUrl: string, private readonly identity: Identity, private readonly timeoutMs = 8_000) {
+    constructor(baseUrl: string, identity: Identity, timeoutMs = 8_000) {
+        this.identity = identity;
+        this.timeoutMs = timeoutMs;
         this.baseUrl = normalizeServerUrl(baseUrl);
         this.ownFingerprint = fingerprint(identity.publicKey);
     }

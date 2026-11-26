@@ -1,19 +1,20 @@
 // --smoke-test: an end-to-end check of the real app, driving the actual Vue UI.
 //
-//   A real chat server (directory + PeerJS signaling) runs in-process, and two bots join it, each
-//   with its own hidden WebRTC transport window, like separate devices:
+//   The real chat server (directory + PeerJS signaling, in-memory PGlite) runs as a child Node
+//   process (Node 22.18+ on PATH; npm's own Node when run through npm), and two bots join it,
+//   each with its own hidden WebRTC transport window, like separate devices:
 //   1. "Echo Bot" is unlisted: it can't be found by name, but connecting by fingerprint works.
 //   2. "Remote Bot" is listed: find it by name and connect.
 //   3. Disconnect, then reconnect to the contact by fingerprint.
-//   4. Check the server's database holds no IP address.
+//   4. Check the server's listings hold no IP address.
 //
 // Exits 0 on success. --screenshot=<file.png> also saves the window.
 import { BrowserWindow, app } from "electron";
+import { type ChildProcess, spawn } from "node:child_process";
 import * as fs from "node:fs";
-import type { Server } from "node:http";
-import type { AddressInfo } from "node:net";
-import { ChatNode } from "../core/chat-node";
-import { createIdentity } from "../core/identity";
+import * as path from "node:path";
+import { ChatNode } from "@cas-p2p-chat/core/chat-node";
+import { createIdentity } from "@cas-p2p-chat/core/identity";
 import { ServerSync } from "./server-sync";
 import { WebRtcBridge, acceptIncoming } from "./webrtc-bridge";
 
@@ -71,22 +72,40 @@ function device(name: string) {
     return { node, bridge, server };
 }
 
+/** Starts apps/server under Node, on a free port with an in-memory database. Resolves to its URL. */
+function startServer(): Promise<{ url: string; child: ChildProcess }> {
+    const dir = path.join(__dirname, "..", "..", "..", "server");
+    const child = spawn(process.env.npm_node_execpath ?? "node", ["--conditions=cas-source", path.join("src", "server.ts")], {
+        cwd: dir,
+        env: { ...process.env, PORT: "0", HOST: "127.0.0.1", DATABASE_URL: "pglite:memory", ICE_SERVERS: "[]" },
+        stdio: ["ignore", "pipe", "inherit"],
+    });
+    return new Promise((resolve, reject) => {
+        let output = "";
+        child.stdout!.on("data", (chunk: Buffer) => {
+            output += chunk.toString();
+            const match = /server on (http:\/\/[\d.]+:\d+)/.exec(output);
+            if (match) {
+                resolve({ url: match[1], child });
+            }
+        });
+        child.once("error", reject);
+        child.once("exit", (code) => reject(new Error(`the chat server exited (${code}): ${output}`)));
+    });
+}
+
 export function runSmokeTest(window: BrowserWindow, screenshot: string | undefined): void {
     const echo = device("Echo Bot");
     const remote = device("Remote Bot");
 
     window.webContents.once("did-finish-load", async () => {
         let ok = false;
-        let chatServer: Server | undefined;
+        let chatServer: ChildProcess | undefined;
         try {
-            const { createChatServer } = await import("../server/app.js");
-            const { PeerStore } = await import("../server/peer-store.js");
-            const store = new PeerStore(":memory:");
-            // No STUN/TURN: both "devices" are on this machine, so host candidates are enough.
-            const chat = createChatServer({ store, iceServers: [] });
-            chatServer = chat.server;
-            await new Promise<void>((resolve) => chat.server.listen(0, "127.0.0.1", resolve));
-            const serverUrl = `http://127.0.0.1:${(chat.server.address() as AddressInfo).port}`;
+            // No STUN/TURN (ICE_SERVERS=[]): both "devices" are on this machine, so host candidates are enough.
+            const started = await startServer();
+            chatServer = started.child;
+            const serverUrl = started.url;
 
             await echo.server.setServer(serverUrl, false);
             await remote.server.setServer(serverUrl, true);
@@ -133,18 +152,19 @@ export function runSmokeTest(window: BrowserWindow, screenshot: string | undefin
                 };
             })()`);
 
-            // Everything the server stored, as text: it must not contain an IP address.
-            const stored = JSON.stringify(store.list());
-            const storesNoIp = !/\b\d{1,3}(\.\d{1,3}){3}\b|::/.test(stored);
+            // The listings the server hands out, as text: they must not contain an IP address.
+            const listed = ((await (await fetch(`${serverUrl}/health`)).json()) as { listed: number }).listed;
+            const stored = await (await fetch(`${serverUrl}/v1/peers?q=bot`)).text();
+            const storesNoIp = stored.includes("Remote Bot") && !/\b\d{1,3}(\.\d{1,3}){3}\b|::/.test(stored);
             ok = /^[0-9A-F]{4}( [0-9A-F]{4}){7}$/.test(result.fingerprint)
                 && result.echoFindable === false
                 && result.echoWhere === "connected (WebRTC)"
                 && result.badge === "unverified"
                 && result.contacts.length === 2
                 && result.incoming.includes("echo: back again")
-                && store.count() === 2 // Remote Bot and this app; Echo Bot stayed unlisted
+                && listed === 2 // Remote Bot and this app; Echo Bot stayed unlisted
                 && storesNoIp;
-            console.log(`smoke test ${ok ? "passed" : "FAILED"}: ${JSON.stringify({ ...result, listed: store.count(), storesNoIp })}`);
+            console.log(`smoke test ${ok ? "passed" : "FAILED"}: ${JSON.stringify({ ...result, listed, storesNoIp })}`);
 
             // A hidden window can't be captured, so show it unfocused first.
             if (ok && screenshot) {
@@ -160,7 +180,7 @@ export function runSmokeTest(window: BrowserWindow, screenshot: string | undefin
             bot.bridge.destroy();
             bot.node.close();
         }
-        chatServer?.close();
+        chatServer?.kill();
         try {
             fs.rmSync(app.getPath("userData"), { recursive: true, force: true });
         } catch {

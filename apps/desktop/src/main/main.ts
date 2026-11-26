@@ -2,10 +2,10 @@ import { BrowserWindow, app, clipboard, ipcMain, safeStorage, session, type IpcM
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { ChatNode, PeerSummary } from "../core/chat-node";
-import { Identity, createIdentity, parseIdentity, serializeIdentity } from "../core/identity";
-import { fingerprintToPeerId, normalizeFingerprint } from "../core/peer-id";
-import { TrustStore } from "../core/trust-store";
+import { ChatNode, PeerSummary } from "@cas-p2p-chat/core/chat-node";
+import { Identity, createIdentity, parseIdentity, serializeIdentity } from "@cas-p2p-chat/core/identity";
+import { fingerprintToPeerId, normalizeFingerprint } from "@cas-p2p-chat/core/peer-id";
+import { TrustStore } from "@cas-p2p-chat/core/trust-store";
 import { ServerState, ServerSync } from "./server-sync";
 import { WebRtcBridge, acceptIncoming } from "./webrtc-bridge";
 

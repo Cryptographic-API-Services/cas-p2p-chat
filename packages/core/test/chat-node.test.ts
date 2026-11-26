@@ -4,10 +4,10 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { after, describe, it } from "node:test";
-import { ChatMessage, ChatNode, PeerSummary } from "../src/core/chat-node";
-import { createIdentity, fingerprint } from "../src/core/identity";
-import { TrustStore } from "../src/core/trust-store";
-import { linkPair } from "./helpers/memory-link";
+import { type ChatMessage, ChatNode, type PeerSummary } from "../src/chat-node.ts";
+import { createIdentity, fingerprint } from "../src/identity.ts";
+import { TrustStore } from "../src/trust-store.ts";
+import { linkPair } from "./helpers/memory-link.ts";
 
 const nodes: ChatNode[] = [];
 after(() => nodes.forEach((node) => node.close()));

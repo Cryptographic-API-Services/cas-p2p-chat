@@ -1,0 +1,12 @@
+{
+  // Type-check only: Node runs the server's .ts sources directly (type stripping), so there is no
+  // build. Only erasable syntax and explicit .ts imports.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "drizzle.config.ts"]
+}
