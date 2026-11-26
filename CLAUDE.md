@@ -118,8 +118,8 @@ npm run db:generate -w @cas-p2p-chat/core     # after editing packages/core/src/
 ## Architecture
 
 ```
-packages/core/src/    Plain Node, no Electron: protocol, identity, peer-id (fingerprint ↔ PeerJS
-                      ID), signaling-token, ChatNode (runs any FrameLink), TrustStore (= contacts,
+packages/core/src/    Plain Node, no Electron: protocol, kdf (HKDF-SHA512), identity, peer-id
+                      (fingerprint ↔ PeerJS ID), signaling-token, ChatNode (runs any FrameLink), TrustStore (= contacts,
                       over a ContactRepository), signed directory records, DirectoryClient.
                       Everything here is unit-tested.
 packages/core/src/repositories/  The desktop app's local data: schema.ts (Drizzle tables),
@@ -220,28 +220,42 @@ deploy/azure/         setup.sh (Azure CLI: resource group, identity, registry, C
 ### Crypto and protocol (`packages/core/src/protocol.ts`, `directory-record.ts`, `signaling-token.ts`)
 
 - Identity: a long-term Ed25519 key. Fingerprint: the first 128 bits of BLAKE2b-512 of the
-  identity key. Session: a fresh X25519 key pair per connection, which is the HPKE key pair
-  (cas-lib's suite is DHKEM(X25519, HKDF-SHA256), HKDF-SHA512, AES-256-GCM).
+  identity key. Session (`PROTOCOL_ID` `cas-p2p-chat/2`): a fresh X25519 key pair and a fresh
+  ML-KEM-1024 (FIPS 203) key pair per connection. The key exchange is a **post-quantum
+  hybrid**: recorded traffic stays confidential unless both X25519 and ML-KEM are broken, so
+  "harvest now, decrypt later" with a quantum computer doesn't work. Authentication is still
+  classical Ed25519 (see "What to build next").
 - The handshake is symmetric, so it doesn't matter who dialed. Both sides send `hello`
-  (display name, identity key, session key, random 32-byte challenge), derive
-  `sessionId = BLAKE2b-512(context ‖ both hello transcripts, sorted)`, and send `auth`: an
-  Ed25519 signature over `context ‖ sessionId ‖ own session key`, verified with the key from
-  the peer's hello. `sessionId` covers both challenges, so an `auth` can't be replayed into
-  another session, and the signature binds the session key to the identity, so a relay can't
-  swap in its own. This is why neither the transport window, the server, a TURN relay nor DTLS
-  (whose keys the signaling server could swap) has to be trusted.
-- Each message is HPKE-sealed to the peer's session key with AAD
-  `sessionId ‖ sender session key ‖ seq`, then Ed25519-signed (HPKE base mode doesn't
-  authenticate the sender). `seq` must be exactly the next number, which rejects replayed,
-  dropped and reordered messages; any violation closes the connection.
+  (display name, identity key, X25519 session key, ML-KEM `kemKey` (1,568 bytes), random
+  32-byte challenge) and derive `sessionId = BLAKE2b-512(context ‖ both hello transcripts,
+  sorted)`. Each encapsulates a secret to the peer's `kemKey` and sends `auth`: the
+  `kemCiphertext` (1,568 bytes) plus an Ed25519 signature over
+  `context ‖ sessionId ‖ own session key ‖ own kemCiphertext`, verified with the key from the
+  peer's hello. `sessionId` covers both challenges and all four public keys, so an `auth` can't
+  be replayed into another session, and the signature binds the session key and ciphertext to
+  the identity, so a relay can't swap in its own. This is why neither the transport window, the
+  server, a TURN relay nor DTLS (whose keys the signaling server could swap) has to be trusted.
+- Key schedule (`receiveAuth`): `prk = HKDF-Extract(salt = sessionId, context ‖ X25519 secret ‖
+  both KEM secrets ‖ both KEM ciphertexts)`, the KEM pairs ordered by whose hello sorts first;
+  each direction's key is `HKDF-Expand(prk, context ‖ sender's session key, 32)`. Like X-Wing,
+  one extract over both secrets, the ciphertexts and (through `sessionId`) the public keys.
+  HKDF-SHA512 is `kdf.ts`, built on the SDK's HMAC-SHA512 (the SDK has no HKDF) and tested
+  against `node:crypto`. Handshake and shared secrets are wiped once the keys are derived.
+- Each message is AES-256-GCM under the sender's direction key, with nonce `0⁴ ‖ u64(seq)` and
+  AAD `context ‖ sessionId ‖ seq`; the frame is just `{ type, seq, ciphertext }` (ciphertext ‖
+  tag). Messages carry no signature: only the two peers hold the keys, which come from an
+  authenticated handshake, so the tag authenticates the sender (deniably), and separate
+  direction keys stop reflection and nonce reuse. `seq` must be exactly the next number, which
+  rejects replayed, dropped and reordered messages; any violation closes the connection.
 - Frames are JSON text on a reliable, ordered data channel, binary fields in base64, capped at
   `MAX_FRAME_BYTES` (256 KiB). Messages are capped at `MAX_TEXT_LENGTH` (16,000 characters).
 - Trust is TOFU: `TrustStore` remembers fingerprints on first connection (that list is the
   Contacts list). The UI warns until the user clicks **Mark as verified**, and warns in red if a
   different key connects under a name seen before.
-- Every signed or hashed input starts with a fixed context string (`cas-p2p-chat/v1/...`,
-  `cas-p2p-chat/v2/directory-...`). Variable-length fields are length-prefixed. Keep it that
-  way, and use a **new** context string for any new signature purpose.
+- Every signed or hashed input starts with a fixed context string (`cas-p2p-chat/v2/...` for
+  the session protocol, `cas-p2p-chat/v1/...` for signaling tokens, `cas-p2p-chat/v2/directory-...`).
+  Variable-length fields are length-prefixed. Keep it that way, and use a **new** context
+  string for any new signature or key-derivation purpose.
 - **Any wire-format change** (frames, payload, transcript, signed bytes) must bump `PROTOCOL_ID`,
   or old and new peers will fail in confusing ways. For directory record bytes, bump the context
   version (as v1 → v2 did when IPs were removed). For a table change, edit
@@ -434,8 +448,22 @@ separate from other apps' environments: the only shared resource is the PostgreS
 - **Relay-only mode** (`iceTransportPolicy: "relay"` plus TURN) would hide peers' public IPs
   from each other, at the cost of relaying all traffic. Chromium already hides LAN addresses
   behind mDNS names.
+- **Post-quantum identities (hybrid Ed25519 + ML-DSA-65).** The key exchange is already
+  hybrid; authentication isn't. Forging a handshake must happen live, so this only matters once
+  a quantum computer exists, but identity keys live for years. The plan: identities hold both
+  keys (the SDK's `MlDsa65Wrapper`; its signing key is a 32-byte seed), every signature is both
+  and verifies only if both do, under new context strings. The fingerprint must commit to the
+  ML-DSA key (otherwise a forged Ed25519 signature could attach an attacker's ML-DSA key), so
+  fingerprints, PeerJS IDs and directory keys change: migrate contacts with a key-upgrade
+  statement signed by the old Ed25519 key and the new ML-DSA key, accepted while Ed25519 is
+  still sound, and consider 256-bit fingerprints at the same time. Directory listings grow to
+  about 7–8 KB (raise the 4 KiB body cap). Signaling tokens can stay Ed25519-only (a forgery
+  only squats a PeerJS ID; the handshake still proves the identity) if the fingerprint is
+  `H(ctx ‖ H(ed25519 key) ‖ H(ML-DSA key))`, so a token needn't carry the 1,952-byte key.
 - **Per-message forward secrecy.** Session keys are discarded when a connection closes, but a
-  device compromised mid-session exposes that session. A ratchet would narrow this.
+  device compromised mid-session exposes that session. A ratchet would narrow this, starting
+  from the per-direction keys `receiveAuth` derives (ideally with periodic ML-KEM steps, as
+  Signal's SPQR does).
 - **More than one server instance** needs shared presence and message routing (for example
   Redis pub/sub). The directory is already in PostgreSQL.
 - **History beyond the latest 1,000 messages** (paging older ones in), retention settings or

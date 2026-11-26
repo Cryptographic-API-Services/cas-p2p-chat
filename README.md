@@ -93,14 +93,18 @@ can't impersonate anyone or read your messages.
 | --- | --- | --- |
 | Device identity | Ed25519 key pair | Long-term, created on first run |
 | Fingerprint | BLAKE2b-512 of the identity key, first 128 bits | Also the device's signaling ID |
-| Session key | X25519 key pair | One per connection, in memory only |
-| Message encryption | HPKE: DHKEM(X25519, HKDF-SHA256), HKDF-SHA512, AES-256-GCM | Fresh encapsulation per message |
-| Message authentication | Ed25519 signature by the sender's identity key | Per message |
+| Key exchange | Hybrid: X25519 + ML-KEM-1024 (post-quantum), combined with HKDF-SHA512 | Fresh keys per connection, in memory only |
+| Handshake authentication | Ed25519 signature by each side's identity key | Per connection |
+| Message encryption | AES-256-GCM, one key per direction | Per connection |
 
-When two devices connect, each sends a fresh session key and a random challenge, then signs its
-session key and a hash of both sides' handshakes with its identity key. If you dialed a fingerprint, the connection is dropped
-unless the other side proves it owns that identity. Each message is then encrypted to the peer's
-session key and signed, and numbered so replayed, dropped or reordered messages are rejected.
+When two devices connect, each sends fresh X25519 and ML-KEM keys and a random challenge,
+encapsulates a secret to the other's ML-KEM key, and signs its keys, that ciphertext and a hash
+of both sides' handshakes with its identity key. If you dialed a fingerprint, the connection is
+dropped unless the other side proves it owns that identity. Both sides derive the message keys
+from the X25519 secret and both ML-KEM secrets together, so recorded traffic stays private
+unless both X25519 and ML-KEM are broken: a future quantum computer breaking X25519 isn't
+enough. Each message is then encrypted and numbered, so replayed, dropped or reordered messages
+are rejected.
 The signaling server only relays connection setup; it couldn't read messages even if it
 tampered with WebRTC's own encryption. Contacts are trusted on first use, and a red warning
 appears if a different key connects under a name you've seen before.
@@ -138,6 +142,8 @@ How the public server is deployed on Azure is in [CLAUDE.md](CLAUDE.md#azure-dep
   1,000 messages.
 - **Forward secrecy is per connection, not per message.** A device compromised mid-session
   exposes that session.
+- **Identities are not yet post-quantum.** Encryption is, but identity keys are Ed25519, so a
+  future quantum computer could impersonate someone (not read their past messages).
 - **Names are self-chosen, and search can be probed.** Fingerprints are the real identity; stay
   unlisted if you don't want to be findable.
 - **Releases are unsigned and x64 only**, with no auto-update.
