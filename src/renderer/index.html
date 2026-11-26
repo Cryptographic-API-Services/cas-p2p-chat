@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <!-- style-src needs 'unsafe-inline' because Vuetify injects its theme as a <style> element.
+         Scripts stay 'self' only: Vite precompiles the Vue templates, so nothing needs eval. -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+    <title>CAS P2P Chat</title>
+</head>
+<body>
+<div id="app"></div>
+<script type="module" src="./main.ts"></script>
+</body>
+</html>

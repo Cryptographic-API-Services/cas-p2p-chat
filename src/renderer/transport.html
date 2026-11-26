@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <!-- The hidden WebRTC transport window. It may only open WebSockets (signaling); WebRTC
+         data channels aren't governed by CSP. -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none'; script-src 'self'; connect-src ws: wss:; base-uri 'none'; form-action 'none'">
+    <title>CAS P2P Chat transport</title>
+</head>
+<body>
+<script type="module" src="./transport.ts"></script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+/*
+ * Cascade order for Tailwind + Vuetify. Tailwind's reset (base) comes first, then all of
+ * Vuetify, then Tailwind's utilities, so Tailwind classes can restyle Vuetify components
+ * without !important. Vuetify's transitions stay last. This must be the first CSS loaded.
+ */
+@layer theme, base, vuetify-core, vuetify-components, vuetify-overrides, vuetify-utilities, components, utilities, vuetify-final;
+
+@import "tailwindcss" source(".");
+
+/*
+ * Tailwind colors that follow the active Vuetify theme, so light/dark switches with it.
+ * They use their own names (brand, bubble, ...) so they never collide with the theme
+ * classes Vuetify generates for its components (bg-primary, text-primary, ...).
+ */
+@theme inline {
+    --color-brand: rgb(var(--v-theme-primary));
+    --color-on-brand: rgb(var(--v-theme-on-primary));
+    --color-bubble: rgba(var(--v-theme-on-surface), 0.08);
+    --color-on-bubble: rgb(var(--v-theme-on-surface));
+    --color-muted: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+    --color-line: rgba(var(--v-border-color), var(--v-border-opacity));
+    --font-mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", monospace;
+}
+
+/* Material 3 card titles are sized for full pages; the sidebar wants them compact. */
+@layer components {
+    .v-card-title {
+        @apply text-base font-medium;
+    }
+}
