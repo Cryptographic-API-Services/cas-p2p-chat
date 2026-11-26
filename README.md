@@ -153,7 +153,11 @@ an Entra token and uses it as the database password (cached, and refreshed befor
 after about an hour). `DATABASE_URL` names the identity as the user and holds no secret. In
 PostgreSQL the identity is a role of the same name that owns `cas_p2p_chat`, so it can run the
 migrations itself at startup. GitHub Actions signs in with a federated credential, so there's no
-client secret either.
+client secret either. Its subject has to match the token GitHub sends exactly. This repository
+uses GitHub's immutable subject format, which includes the owner and repository IDs
+(`repo:Cryptographic-API-Services@151890385/cas-p2p-chat@1472581191:ref:refs/heads/main`), so a
+credential for the plain `repo:<owner>/<repo>:…` form fails with `AADSTS700213`. `setup.sh`
+asks GitHub for the right prefix.
 
 The app is also set up for this server:
 

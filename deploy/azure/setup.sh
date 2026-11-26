@@ -147,11 +147,16 @@ step "GitHub Actions sign-in ($GITHUB_APP, federated credential for main)"
 GH_APP_ID=$(az ad app list --display-name "$GITHUB_APP" --query "[0].appId" -o tsv)
 [ -n "$GH_APP_ID" ] || GH_APP_ID=$(az ad app create --display-name "$GITHUB_APP" --query appId -o tsv)
 GH_SP_ID=$(az ad sp show --id "$GH_APP_ID" --query id -o tsv 2>/dev/null || az ad sp create --id "$GH_APP_ID" --query id -o tsv)
-SUBJECT="repo:$GITHUB_REPO:ref:refs/heads/main"
-if [ -z "$(az ad app federated-credential list --id "$GH_APP_ID" --query "[?subject=='$SUBJECT'].name" -o tsv)" ]; then
-  az ad app federated-credential create --id "$GH_APP_ID" -o none --parameters \
-    "{\"name\":\"github-main\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"subject\":\"$SUBJECT\",\"audiences\":[\"api://AzureADTokenExchange\"]}"
-fi
+# The token's subject must match exactly. With the repository's "immutable subject" option on,
+# GitHub writes it as repo:<owner>@<owner id>/<repo>@<repo id>:…, so ask GitHub for the prefix.
+PREFIX=$(gh api "repos/$GITHUB_REPO/actions/oidc/customization/sub" --jq 'if .use_immutable_subject then .sub_claim_prefix else empty end' 2>/dev/null || true)
+SUBJECT="${PREFIX:-repo:$GITHUB_REPO}:ref:refs/heads/main"
+CREDENTIAL="{\"name\":\"github-main\",\"issuer\":\"https://token.actions.githubusercontent.com\",\"subject\":\"$SUBJECT\",\"audiences\":[\"api://AzureADTokenExchange\"]}"
+case "$(az ad app federated-credential list --id "$GH_APP_ID" --query "[?name=='github-main'].subject | [0]" -o tsv)" in
+  "$SUBJECT") ;;
+  "") az ad app federated-credential create --id "$GH_APP_ID" --parameters "$CREDENTIAL" -o none ;;
+  *) az ad app federated-credential update --id "$GH_APP_ID" --federated-credential-id github-main --parameters "$CREDENTIAL" -o none ;;
+esac
 az role assignment create --assignee-object-id "$GH_SP_ID" --assignee-principal-type ServicePrincipal \
   --role Contributor --scope "$(az group show -n "$RESOURCE_GROUP" --query id -o tsv)" -o none
 gh secret set AZURE_CLIENT_ID -R "$GITHUB_REPO" -b "$GH_APP_ID"

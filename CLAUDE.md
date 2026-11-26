@@ -260,6 +260,12 @@ deploy/azure/         setup.sh (Azure CLI: resource group, identity, registry, C
   Don't use `az containerapp update --yaml` on the live app: it replaces the ingress config,
   dropping the custom domain and the Cloudflare rules (`setup.sh` uses `--set-env-vars`).
   Don't add access logging (Front Door, App Gateway) that would record IPs.
+- **GitHub → Azure sign-in** is the Entra app `cas-p2p-chat-gh`, with one federated credential
+  (`github-main`). The repo has GitHub's `use_immutable_subject` on, so the subject is
+  `repo:Cryptographic-API-Services@151890385/cas-p2p-chat@1472581191:ref:refs/heads/main`, not
+  `repo:<owner>/<repo>:…`. A mismatch fails `azure/login` with `AADSTS700213`. `setup.sh` reads
+  the prefix from `gh api repos/<repo>/actions/oidc/customization/sub`; do the same for any new
+  credential (an environment, another branch).
 
 ## Git
 
