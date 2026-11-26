@@ -1,0 +1,82 @@
+# Tests the server, builds its image in Azure Container Registry and rolls it out to the
+# cas-p2p-chat-server Container App. Runs on pushes to main that touch the server or the core
+# package it uses, or by hand (Actions → Deploy server → Run workflow).
+#
+# The one-time Azure setup is deploy/azure/setup.sh. It creates the Entra app this workflow signs
+# in as (federated credential for main; no stored password) and sets the AZURE_CLIENT_ID,
+# AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID secrets. Database migrations need no step here: the
+# server applies them at startup, signed in with its own managed identity.
+name: Deploy server
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "apps/server/**"
+      - "packages/core/**"
+      - "package-lock.json"
+      - ".github/workflows/deploy-server.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: false
+
+env:
+  REGISTRY: casp2pchat
+  IMAGE: cas-p2p-chat-server
+  RESOURCE_GROUP: cas-p2p-chat
+  CONTAINER_APP: cas-p2p-chat-server
+  # The app only accepts Cloudflare (deploy/azure/cloudflare-ingress.sh), so check it through there.
+  PUBLIC_URL: https://chatp2p.cryptographicapiservices.com
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+      # Core and server only: the desktop app's Electron download isn't needed here.
+      - run: npm ci --ignore-scripts -w @cas-p2p-chat/core -w @cas-p2p-chat/server --include-workspace-root
+      - run: npm test
+
+  deploy:
+    name: Build and deploy
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write       # sign in to Azure with the federated credential
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      # Builds in Azure (ACR Tasks), so the runner needs no Docker.
+      - name: Build and push the image
+        run: |
+          az acr build --registry "$REGISTRY" --platform linux/amd64 \
+            --image "$IMAGE:${{ github.sha }}" --image "$IMAGE:latest" \
+            --file apps/server/Dockerfile .
+      - name: Deploy to the Container App
+        run: |
+          az containerapp update --resource-group "$RESOURCE_GROUP" --name "$CONTAINER_APP" \
+            --image "$REGISTRY.azurecr.io/$IMAGE:${{ github.sha }}" --output none
+      - name: Wait for /health
+        run: |
+          for i in $(seq 30); do
+            if curl -fsS "$PUBLIC_URL/health"; then echo; exit 0; fi
+            sleep 10
+          done
+          echo "::error::$PUBLIC_URL/health didn't answer within 5 minutes"
+          exit 1

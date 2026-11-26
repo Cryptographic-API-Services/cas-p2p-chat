@@ -1,0 +1,32 @@
+{
+  "name": "@cas-p2p-chat/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CAS P2P Chat server: PeerJS signaling plus an opt-in find-by-name directory in PostgreSQL.",
+  "type": "module",
+  "license": "ISC",
+  "scripts": {
+    "start": "node --conditions=cas-source src/server.ts",
+    "typecheck": "tsc -p .",
+    "test": "node --conditions=cas-source --test \"test/**/*.test.ts\"",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@cas-p2p-chat/core": "0.1.0",
+    "@electric-sql/pglite": "^0.5.17",
+    "drizzle-orm": "^0.45.4",
+    "express": "^5.3.0",
+    "peer": "^1.0.2",
+    "pg": "^8.23.1",
+    "pg-connection-string": "^2.14.1",
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.11",
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.2",
+    "drizzle-kit": "^0.31.11",
+    "typescript": "~6.0.3"
+  }
+}

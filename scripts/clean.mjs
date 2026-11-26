@@ -1,3 +1,5 @@
 import { rmSync } from "node:fs";
 
-rmSync("dist", { recursive: true, force: true });
+for (const dir of ["packages/core/dist", "apps/server/dist", "apps/desktop/dist"]) {
+    rmSync(dir, { recursive: true, force: true });
+}
