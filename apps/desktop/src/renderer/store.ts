@@ -262,6 +262,19 @@ export async function connect(target: string): Promise<string | null> {
     }
 }
 
+/**
+ * Opens a contact's conversation and, if there's no session with them, dials them: clicking a
+ * contact means you want to talk. Nothing is dialed while another dial is under way or without
+ * a server, and after Disconnect only a new click dials again.
+ */
+export function open(fingerprint: string): void {
+    select(fingerprint);
+    const conversation = state.conversations.get(fingerprint);
+    if (conversation && !conversation.peer && !state.connecting && state.server.signaling === "online") {
+        void connectOrToast(fingerprint);
+    }
+}
+
 /** Connects and reports failure as a toast (for buttons without their own error area). */
 export async function connectOrToast(target: string): Promise<void> {
     const error = await connect(target);

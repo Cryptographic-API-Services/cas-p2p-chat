@@ -5,7 +5,7 @@
 //   each with its own hidden WebRTC transport window, like separate devices:
 //   1. "Echo Bot" is unlisted: it can't be found by name, but connecting by fingerprint works.
 //   2. "Remote Bot" is listed: find it by name and connect.
-//   3. Disconnect, then reconnect to the contact by fingerprint.
+//   3. Disconnect, then click the contact, which dials them again.
 //   4. Check the server's listings hold no IP address.
 //   5. Check the local database holds no message text, name or fingerprint in the clear; reload
 //      the window and check the saved history comes back; delete one contact's history.
@@ -57,7 +57,7 @@ const PAGE_HELPERS = `
     };
     const texts = (testId) => [...document.querySelectorAll('[data-testid="' + testId + '"] [data-testid="message-text"]')].map((e) => e.textContent.trim());
     const chatWith = async (name, message) => {
-        await until(name + "'s conversation", () => text("peer-name") === name && text("peer-where") !== "not connected");
+        await until(name + "'s conversation", () => text("peer-name") === name && text("peer-where") === "connected (WebRTC)");
         fill("composer", message);
         await until("the send button", () => !q("send").disabled);
         q("send").click();
@@ -138,11 +138,10 @@ export function runSmokeTest(window: BrowserWindow, screenshot: string | undefin
                 result.querySelector('[data-testid="search-connect"]').click();
                 await chatWith("Remote Bot", "hello by name");
 
-                // 3. Disconnect, then reconnect to the contact by fingerprint.
+                // 3. Disconnect, then click the contact, which dials them again.
                 q("disconnect").click();
                 await until("the disconnect", () => text("peer-where") === "not connected");
-                await until("the reconnect button", () => !q("reconnect").disabled);
-                q("reconnect").click();
+                document.querySelector('[data-testid="conversation"][data-name="Remote Bot"]').click();
                 await chatWith("Remote Bot", "back again");
 
                 return {

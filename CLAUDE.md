@@ -73,7 +73,7 @@ npm run db:generate -w @cas-p2p-chat/core     # after editing packages/core/src/
   production SQL. The smoke test starts the real server as a child process (in-memory PGlite)
   and two bot devices, each with its own hidden WebRTC window, and checks that an unlisted bot
   can't be found by name but can be reached by fingerprint, a listed bot can be found and
-  chatted with, a contact can be redialed by fingerprint after a disconnect, the listings the
+  chatted with, clicking a contact after a disconnect dials them again, the listings the
   server hands out hold no IP address, and the local database holds no message text, name or
   fingerprint in the clear. Then it reloads the window, checks the saved history comes back,
   and deletes one contact's history. It never joins the public server (`--smoke-test` skips
@@ -333,7 +333,10 @@ deploy/azure/         setup.sh (Azure CLI: resource group, identity, registry, C
   takes `disconnected`, not `connected`.
 - **Contacts say "connected" / "not connected", never "online" / "offline"**: it's whether
   there's a live chat session (`conversation.peer`), not whether they're running the app. The
-  app doesn't learn when a contact comes back; one side clicks **Connect**. Only name-search
+  app doesn't learn when a contact comes back and never dials on its own (dialing tells the
+  server whom you're reaching and shows the contact your IP). Clicking a contact dials them
+  (`open` in `store.ts`), since that's the user choosing to talk; so does **Connect**.
+  **Disconnect** ends the session, and nothing redials until the next click. Only name-search
   results say "online", because there it is the server's live presence.
 - `vue-tsc` mistypes the imported reactive `state` as a ref inside `<template v-else>` blocks
   (`Property 'value' does not exist`). Read it through a `computed` there, as `ServerCard.vue`

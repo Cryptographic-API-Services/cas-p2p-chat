@@ -17,6 +17,7 @@ never stores an IP address.
    It's off until you turn it on.
 4. Find someone who's online with **Find someone by name** (at least 2 characters), or paste
    their fingerprint into **Connect**. Yours is under **Your fingerprint**; click it to copy.
+   Everyone you've talked to stays under **Contacts**: click one to connect again.
 5. Compare fingerprints with the other person in person or on a call, then click **Mark as
    verified**. Until you do, the conversation shows a warning.
 

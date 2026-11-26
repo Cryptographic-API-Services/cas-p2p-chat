@@ -16,7 +16,7 @@ const connected = computed(() => props.conversation.peer !== null);
 const verified = computed(() => props.conversation.trust.level === "verified");
 const canReconnect = computed(() => state.server.signaling === "online");
 const reconnecting = computed(() => state.connecting === props.conversation.fingerprint);
-const where = computed(() => (props.conversation.peer ? "connected (WebRTC)" : "not connected"));
+const where = computed(() => (props.conversation.peer ? "connected (WebRTC)" : reconnecting.value ? "connecting…" : "not connected"));
 
 function clock(at: number): string {
     return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { select, shortFingerprint, sortedConversations, state } from "../store";
+import { open, shortFingerprint, sortedConversations, state } from "../store";
 import TrustChip from "./TrustChip.vue";
 </script>
 
@@ -14,7 +14,7 @@ import TrustChip from "./TrustChip.vue";
                 :data-name="conversation.name"
                 :active="conversation.fingerprint === state.selected"
                 color="primary"
-                @click="select(conversation.fingerprint)"
+                @click="open(conversation.fingerprint)"
             >
                 <v-list-item-title :class="{ 'text-muted': !conversation.peer }">
                     {{ conversation.name }}
