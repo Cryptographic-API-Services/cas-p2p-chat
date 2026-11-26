@@ -57,7 +57,7 @@ const PAGE_HELPERS = `
     };
     const texts = (testId) => [...document.querySelectorAll('[data-testid="' + testId + '"] [data-testid="message-text"]')].map((e) => e.textContent.trim());
     const chatWith = async (name, message) => {
-        await until(name + "'s conversation", () => text("peer-name") === name && text("peer-where") !== "offline");
+        await until(name + "'s conversation", () => text("peer-name") === name && text("peer-where") !== "not connected");
         fill("composer", message);
         await until("the send button", () => !q("send").disabled);
         q("send").click();
@@ -140,7 +140,7 @@ export function runSmokeTest(window: BrowserWindow, screenshot: string | undefin
 
                 // 3. Disconnect, then reconnect to the contact by fingerprint.
                 q("disconnect").click();
-                await until("the disconnect", () => text("peer-where") === "offline");
+                await until("the disconnect", () => text("peer-where") === "not connected");
                 await until("the reconnect button", () => !q("reconnect").disabled);
                 q("reconnect").click();
                 await chatWith("Remote Bot", "back again");

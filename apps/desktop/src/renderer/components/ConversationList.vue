@@ -21,11 +21,11 @@ import TrustChip from "./TrustChip.vue";
                 </v-list-item-title>
                 <v-list-item-subtitle>
                     <span class="font-mono">{{ shortFingerprint(conversation.fingerprint) }}</span>
-                    · {{ conversation.peer ? "online" : "offline" }}
+                    · {{ conversation.peer ? "connected" : "not connected" }}
                 </v-list-item-subtitle>
                 <template #append>
                     <v-badge v-if="conversation.unread > 0" :content="conversation.unread" color="primary" inline />
-                    <TrustChip v-else :trust="conversation.trust" :offline="!conversation.peer" />
+                    <TrustChip v-else :trust="conversation.trust" :disconnected="!conversation.peer" />
                 </template>
             </v-list-item>
         </v-list>

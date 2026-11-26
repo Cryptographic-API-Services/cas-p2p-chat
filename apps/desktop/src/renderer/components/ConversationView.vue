@@ -11,11 +11,12 @@ const sending = ref(false);
 const confirmClear = ref(false);
 const scroller = ref<HTMLElement | null>(null);
 
-const online = computed(() => props.conversation.peer !== null);
+/** A live chat session with them, not whether they're running the app. */
+const connected = computed(() => props.conversation.peer !== null);
 const verified = computed(() => props.conversation.trust.level === "verified");
 const canReconnect = computed(() => state.server.signaling === "online");
 const reconnecting = computed(() => state.connecting === props.conversation.fingerprint);
-const where = computed(() => (props.conversation.peer ? "connected (WebRTC)" : "offline"));
+const where = computed(() => (props.conversation.peer ? "connected (WebRTC)" : "not connected"));
 
 function clock(at: number): string {
     return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -67,7 +68,7 @@ watch(() => props.conversation.fingerprint, () => {
             <div class="min-w-0 px-4">
                 <div class="flex items-center gap-2">
                     <span class="truncate text-lg font-medium" data-testid="peer-name">{{ conversation.name }}</span>
-                    <TrustChip data-testid="peer-badge" :trust="conversation.trust" :offline="!online" />
+                    <TrustChip data-testid="peer-badge" :trust="conversation.trust" :disconnected="!connected" />
                 </div>
                 <div class="text-xs text-muted">
                     <span class="font-mono">{{ conversation.fingerprint }}</span> · <span data-testid="peer-where">{{ where }}</span>
@@ -83,7 +84,7 @@ watch(() => props.conversation.fingerprint, () => {
                 >
                     {{ verified ? "Remove verification" : "Mark as verified" }}
                 </v-btn>
-                <v-btn v-if="online" data-testid="disconnect" variant="text" :prepend-icon="mdiLinkVariantOff" @click="disconnect(conversation)">
+                <v-btn v-if="connected" data-testid="disconnect" variant="text" :prepend-icon="mdiLinkVariantOff" @click="disconnect(conversation)">
                     Disconnect
                 </v-btn>
                 <v-btn
@@ -166,8 +167,8 @@ watch(() => props.conversation.fingerprint, () => {
             <v-textarea
                 v-model="draft"
                 data-testid="composer"
-                :placeholder="online ? 'Write a message (Enter to send, Shift+Enter for a new line)' : `${conversation.name} is offline. Connect to keep chatting.`"
-                :disabled="!online"
+                :placeholder="connected ? 'Write a message (Enter to send, Shift+Enter for a new line)' : `Not connected to ${conversation.name}. Click Connect to keep chatting.`"
+                :disabled="!connected"
                 rows="1"
                 max-rows="6"
                 auto-grow
@@ -179,7 +180,7 @@ watch(() => props.conversation.fingerprint, () => {
                 data-testid="send"
                 :icon="mdiSend"
                 color="primary"
-                :disabled="!online || draft.trim() === ''"
+                :disabled="!connected || draft.trim() === ''"
                 :loading="sending"
                 @click="submit"
             />

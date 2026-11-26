@@ -321,7 +321,11 @@ deploy/azure/         setup.sh (Azure CLI: resource group, identity, registry, C
   scripts are `'self'` only. Don't add anything that needs `eval` or inline scripts.
 - Icons are `@mdi/js` SVG paths (`:icon="mdiSend"`), bundled with the app, never fetched.
 - Optional boolean props default to `false` when absent, not `undefined`. That's why `TrustChip`
-  takes `offline`, not `online`.
+  takes `disconnected`, not `connected`.
+- **Contacts say "connected" / "not connected", never "online" / "offline"**: it's whether
+  there's a live chat session (`conversation.peer`), not whether they're running the app. The
+  app doesn't learn when a contact comes back; one side clicks **Connect**. Only name-search
+  results say "online", because there it is the server's live presence.
 - `vue-tsc` mistypes the imported reactive `state` as a ref inside `<template v-else>` blocks
   (`Property 'value' does not exist`). Read it through a `computed` there, as `ServerCard.vue`
   does with `found`.

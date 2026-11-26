@@ -2,11 +2,12 @@
 import { mdiAlertOctagonOutline, mdiShieldAlertOutline, mdiShieldCheck } from "@mdi/js";
 import { computed } from "vue";
 
-const props = defineProps<{ trust: ApiTrust; offline?: boolean }>();
+// "disconnected": no live chat session with them (they may still be running the app).
+const props = defineProps<{ trust: ApiTrust; disconnected?: boolean }>();
 
 const chip = computed(() => {
-    if (props.offline) {
-        return { color: undefined, icon: undefined, text: "offline" };
+    if (props.disconnected) {
+        return { color: undefined, icon: undefined, text: "not connected" };
     }
     if (props.trust.level === "verified") {
         return { color: "success", icon: mdiShieldCheck, text: "verified" };
