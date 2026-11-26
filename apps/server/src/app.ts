@@ -4,15 +4,16 @@ import { verifyDeletion, verifyRegistration } from "@cas-p2p-chat/core/directory
 import type { RTCIceServerLike } from "@cas-p2p-chat/core/directory-client";
 import { ProtocolError } from "@cas-p2p-chat/core/errors";
 import { normalizeFingerprint } from "@cas-p2p-chat/core/peer-id";
-import type { PeerStore, StoredPeer } from "./peer-store.ts";
 import { rateLimit } from "./rate-limit.ts";
+import type { PeerRepository, StoredPeer } from "./repositories/peer-repository.ts";
 import { Presence, SIGNALING_KEY, SIGNALING_PATH, attachSignaling } from "./signaling.ts";
 
 export const MIN_QUERY_LENGTH = 2;
 export const MAX_RESULTS = 20;
 
 export interface ChatServerOptions {
-    store: PeerStore;
+    /** Where listings are kept. */
+    peers: PeerRepository;
     /** STUN/TURN servers handed to clients for WebRTC. */
     iceServers?: RTCIceServerLike[];
     /** Mount the PeerJS signaling endpoint. Off in unit tests: its internal timers keep Node alive. */
@@ -48,7 +49,7 @@ export interface PeerView {
  *   WS     /signal/peerjs            PeerJS signaling (fingerprint IDs with signed tokens only)
  */
 export function createChatServer(options: ChatServerOptions): { app: express.Express; server: http.Server; presence: Presence } {
-    const { store } = options;
+    const { peers } = options;
     const now = options.now ?? Date.now;
     const presence = new Presence();
     const iceServers = options.iceServers ?? [];
@@ -81,7 +82,7 @@ export function createChatServer(options: ChatServerOptions): { app: express.Exp
     app.use(express.json({ limit: "4kb" }));
 
     app.get("/health", async (_req, res) => {
-        res.json({ ok: true, listed: await store.count(), online: presence.size });
+        res.json({ ok: true, listed: await peers.count(), online: presence.size });
     });
 
     app.get("/v1/config", (_req, res) => {
@@ -95,16 +96,16 @@ export function createChatServer(options: ChatServerOptions): { app: express.Exp
             return;
         }
         // Online peers first, so the people you can reach right now show up.
-        const peers = (await store.search(query, MAX_RESULTS * 3))
+        const results = (await peers.search(query, MAX_RESULTS * 3))
             .map(view)
             .sort((a, b) => Number(b.online) - Number(a.online))
             .slice(0, MAX_RESULTS);
-        res.json({ peers });
+        res.json({ peers: results });
     });
 
     app.get("/v1/peers/:fingerprint", async (req, res) => {
         const fingerprint = normalizeFingerprint(String(req.params.fingerprint));
-        const peer = fingerprint ? await store.get(fingerprint) : null;
+        const peer = fingerprint ? await peers.get(fingerprint) : null;
         if (!peer) {
             res.status(404).json({ error: "no such peer" });
             return;
@@ -114,17 +115,17 @@ export function createChatServer(options: ChatServerOptions): { app: express.Exp
 
     app.post("/v1/peers", async (req, res) => {
         const verified = verifyRegistration(req.body, now());
-        const result = await store.register(verified, now());
+        const result = await peers.register(verified, now());
         if (result === "stale") {
             res.status(409).json({ error: "a registration with the same or a newer timestamp was already accepted" });
             return;
         }
-        res.status(result === "created" ? 201 : 200).json(view((await store.get(verified.fingerprint))!));
+        res.status(result === "created" ? 201 : 200).json(view((await peers.get(verified.fingerprint))!));
     });
 
     app.delete("/v1/peers", async (req, res) => {
         const { fingerprint, timestamp } = verifyDeletion(req.body, now());
-        const result = await store.delete(fingerprint, timestamp, now());
+        const result = await peers.delete(fingerprint, timestamp, now());
         if (result === "not-found") {
             res.status(404).json({ error: "no such peer" });
         } else if (result === "stale") {

@@ -7,6 +7,8 @@ export interface Line {
     kind: "outgoing" | "incoming" | "system";
     text: string;
     at: number;
+    /** The message's ID in the saved history, if it was saved. */
+    id?: number | null;
 }
 
 /**
@@ -19,6 +21,8 @@ export interface Conversation {
     trust: ApiTrust;
     peer: ApiPeer | null;
     lines: Line[];
+    /** The saved history has been loaded into `lines` (or is being). */
+    historyLoaded: boolean;
     unread: number;
     /** For ordering: the last message, connection or (for old contacts) last-seen time. */
     lastActive: number;
@@ -33,7 +37,7 @@ export const state = reactive({
     me: null as ApiSelf | null,
     conversations: new Map<string, Conversation>(),
     selected: null as string | null,
-    server: { url: null, listed: true, signaling: "off", directory: "off" } as ApiServer,
+    server: { url: null, listed: false, signaling: "off", directory: "off", defaultUrl: "" } as ApiServer,
     /** The fingerprint being dialed, if any. */
     connecting: null as string | null,
     search: {
@@ -84,7 +88,7 @@ export function relativeTime(at: number, now = Date.now()): string {
 function conversationFor(fingerprint: string, name: string, trust: ApiTrust): Conversation {
     let conversation = state.conversations.get(fingerprint);
     if (!conversation) {
-        state.conversations.set(fingerprint, { fingerprint, name, trust, peer: null, lines: [], unread: 0, lastActive: 0 });
+        state.conversations.set(fingerprint, { fingerprint, name, trust, peer: null, lines: [], historyLoaded: false, unread: 0, lastActive: 0 });
         conversation = state.conversations.get(fingerprint)!;
     }
     return conversation;
@@ -92,7 +96,7 @@ function conversationFor(fingerprint: string, name: string, trust: ApiTrust): Co
 
 function addContact(contact: ApiContact): void {
     const conversation = conversationFor(contact.fingerprint, contact.name, contact.trust);
-    conversation.lastActive = Math.max(conversation.lastActive, Date.parse(contact.lastSeen) || 0);
+    conversation.lastActive = Math.max(conversation.lastActive, Date.parse(contact.lastSeen) || 0, contact.lastMessageAt ?? 0);
 }
 
 function upsertPeer(peer: ApiPeer): Conversation {
@@ -151,7 +155,7 @@ function onEvent(event: ApiEvent): void {
         case "message": {
             const conversation = liveConversation(event.peerId);
             if (conversation) {
-                conversation.lines.push({ kind: "incoming", text: event.message.text, at: event.message.at });
+                conversation.lines.push({ kind: "incoming", text: event.message.text, at: event.message.at, id: event.message.id });
                 conversation.lastActive = event.message.at;
                 if (state.selected !== conversation.fingerprint) {
                     conversation.unread++;
@@ -180,6 +184,9 @@ function onEvent(event: ApiEvent): void {
 export async function init(): Promise<void> {
     window.chat.onEvent(onEvent);
     state.me = await window.chat.getSelf();
+    if (state.me.storageError) {
+        toast(`Saved contacts and messages are unavailable, and nothing is saved this session: ${state.me.storageError}`, "error");
+    }
     for (const contact of await window.chat.listContacts()) {
         addContact(contact);
     }
@@ -194,6 +201,41 @@ export function select(fingerprint: string): void {
     const conversation = state.conversations.get(fingerprint);
     if (conversation) {
         conversation.unread = 0;
+        void loadHistory(conversation);
+    }
+}
+
+/** Puts the saved messages before this session's lines, the first time a conversation is opened. */
+async function loadHistory(conversation: Conversation): Promise<void> {
+    if (conversation.historyLoaded) {
+        return;
+    }
+    conversation.historyLoaded = true;
+    try {
+        const { messages, unreadable } = await window.chat.loadHistory(conversation.fingerprint);
+        // Messages that arrived while loading are in both.
+        const shown = new Set(conversation.lines.map((line) => line.id));
+        const saved: Line[] = messages
+            .filter((message) => !shown.has(message.id))
+            .map((message) => ({ kind: message.direction === "out" ? "outgoing" : "incoming", text: message.text, at: message.at, id: message.id }));
+        if (unreadable > 0) {
+            saved.unshift({ kind: "system", text: `${unreadable} saved message(s) couldn't be decrypted and are hidden.`, at: Date.now() });
+        }
+        conversation.lines.unshift(...saved);
+    } catch (err) {
+        conversation.historyLoaded = false;
+        toast(`Couldn't load saved messages: ${errorText(err)}`, "error");
+    }
+}
+
+/** Deletes the saved messages with a contact, and clears the conversation. */
+export async function clearHistory(conversation: Conversation): Promise<void> {
+    try {
+        await window.chat.clearHistory(conversation.fingerprint);
+        conversation.lines = [];
+        toast(`Deleted your saved messages with ${conversation.name}.`, "success");
+    } catch (err) {
+        toast(`Not deleted: ${errorText(err)}`, "error");
     }
 }
 
@@ -220,6 +262,19 @@ export async function connect(target: string): Promise<string | null> {
     }
 }
 
+/**
+ * Opens a contact's conversation and, if there's no session with them, dials them: clicking a
+ * contact means you want to talk. Nothing is dialed while another dial is under way or without
+ * a server, and after Disconnect only a new click dials again.
+ */
+export function open(fingerprint: string): void {
+    select(fingerprint);
+    const conversation = state.conversations.get(fingerprint);
+    if (conversation && !conversation.peer && !state.connecting && state.server.signaling === "online") {
+        void connectOrToast(fingerprint);
+    }
+}
+
 /** Connects and reports failure as a toast (for buttons without their own error area). */
 export async function connectOrToast(target: string): Promise<void> {
     const error = await connect(target);
@@ -236,7 +291,7 @@ export async function send(text: string): Promise<boolean> {
     }
     try {
         const sent = await window.chat.sendText(conversation.peer.id, text);
-        conversation.lines.push({ kind: "outgoing", text: sent.text, at: sent.at });
+        conversation.lines.push({ kind: "outgoing", text: sent.text, at: sent.at, id: sent.id });
         conversation.lastActive = sent.at;
         return true;
     } catch (err) {

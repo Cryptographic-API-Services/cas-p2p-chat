@@ -13,7 +13,7 @@
 # repository secrets for .github/workflows/deploy-server.yml.
 #
 # The public hostname (chatp2p.cryptographicapiservices.com) is set up by hand, because it
-# involves Cloudflare: see README, "Deploying to Azure". Once it is, run cloudflare-ingress.sh
+# involves Cloudflare: see CLAUDE.md, "Azure deployment". Once it is, run cloudflare-ingress.sh
 # so only Cloudflare can reach the app. This script never touches the hostname binding or the
 # ingress rules of an existing app.
 set -euo pipefail

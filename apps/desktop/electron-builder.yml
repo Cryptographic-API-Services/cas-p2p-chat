@@ -12,6 +12,8 @@ files:
   # The core package is consumed through its compiled dist/src only.
   - "!**/node_modules/@cas-p2p-chat/core/{src,test,dist/test}/**"
   - "!**/node_modules/@cas-p2p-chat/core/tsconfig.json"
+  # core loads drizzle-orm as ESM: its CommonJS copies, types and source maps aren't needed.
+  - "!**/node_modules/drizzle-orm/**/*.{cjs,map,d.ts,d.cts}"
 # cas-typescript-sdk ships prebuilt N-API binaries for every platform: nothing to rebuild for
 # Electron, and a .node file can't load from inside the asar archive.
 npmRebuild: false
@@ -36,7 +38,7 @@ mac:
       arch: [x64]
     - target: zip
       arch: [x64]
-  # Unsigned until there's an Apple Developer ID (see README, "Installing a release").
+  # Unsigned until there's an Apple Developer ID (see README, "Installing").
   identity: null
   files:
     - "!**/node_modules/cas-typescript-sdk/*.{win32,linux}-*.node"

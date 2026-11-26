@@ -1,5 +1,4 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
+import type { Contact, ContactRepository } from "./repositories/contact-repository.ts";
 
 /** new: first time this key has connected. known: seen before. verified: the user compared fingerprints. */
 export type TrustLevel = "new" | "known" | "verified";
@@ -10,57 +9,39 @@ export interface TrustInfo {
     nameConflict: boolean;
 }
 
-interface Entry {
-    name: string;
-    firstSeen: string;
-    lastSeen: string;
-    verified: boolean;
-}
-
 /**
- * Trust-on-first-use record of peer identity keys, keyed by fingerprint, stored as JSON on this
- * device. It doubles as the contact list: everyone this device has ever connected to.
+ * Trust-on-first-use record of peer identity keys, keyed by fingerprint. It doubles as the
+ * contact list: everyone this device has ever connected to. Read from memory, and written
+ * through to a ContactRepository.
  */
 export class TrustStore {
-    private readonly entries = new Map<string, Entry>();
-    private readonly file: string;
+    private readonly entries = new Map<string, Contact>();
+    private readonly contacts: ContactRepository;
 
-    constructor(file: string) {
-        this.file = file;
-        if (!fs.existsSync(file)) {
-            return;
-        }
-        try {
-            const data = JSON.parse(fs.readFileSync(file, "utf8")) as { peers?: unknown };
-            for (const item of Array.isArray(data.peers) ? data.peers : []) {
-                const { fingerprint, name, firstSeen, lastSeen, verified } = item as Record<string, unknown>;
-                if (typeof fingerprint === "string" && typeof name === "string") {
-                    this.entries.set(fingerprint, {
-                        name,
-                        firstSeen: String(firstSeen),
-                        lastSeen: String(lastSeen),
-                        verified: verified === true,
-                    });
-                }
-            }
-        } catch {
-            // Keep the unreadable file for inspection and start a fresh one.
-            fs.renameSync(file, `${file}.corrupt-${Date.now()}`);
+    /** Loads every contact from the repository. */
+    static async load(contacts: ContactRepository): Promise<TrustStore> {
+        return new TrustStore(contacts, await contacts.all());
+    }
+
+    private constructor(contacts: ContactRepository, entries: Contact[]) {
+        this.contacts = contacts;
+        for (const contact of entries) {
+            this.entries.set(contact.fingerprint, contact);
         }
     }
 
     /** Classifies a peer that just connected, then records it as seen. */
-    observe(fingerprint: string, name: string): TrustInfo {
+    async observe(fingerprint: string, name: string): Promise<TrustInfo> {
         const info = this.get(fingerprint, name);
         const now = new Date().toISOString();
         const existing = this.entries.get(fingerprint);
-        this.entries.set(fingerprint, {
+        await this.write({
+            fingerprint,
             name,
             firstSeen: existing?.firstSeen ?? now,
             lastSeen: now,
             verified: existing?.verified ?? false,
         });
-        this.save();
         return info;
     }
 
@@ -73,29 +54,25 @@ export class TrustStore {
 
     /** Every peer this device has connected to: its local contact list. Never leaves the device. */
     list(): Array<{ fingerprint: string; name: string; firstSeen: string; lastSeen: string; trust: TrustInfo }> {
-        return [...this.entries].map(([fingerprint, entry]) => ({
+        return [...this.entries.values()].map(({ fingerprint, name, firstSeen, lastSeen }) => ({
             fingerprint,
-            name: entry.name,
-            firstSeen: entry.firstSeen,
-            lastSeen: entry.lastSeen,
-            trust: this.get(fingerprint, entry.name),
+            name,
+            firstSeen,
+            lastSeen,
+            trust: this.get(fingerprint, name),
         }));
     }
 
-    setVerified(fingerprint: string, verified: boolean): void {
+    async setVerified(fingerprint: string, verified: boolean): Promise<void> {
         const entry = this.entries.get(fingerprint);
         if (!entry) {
             throw new Error("unknown peer");
         }
-        entry.verified = verified;
-        this.save();
+        await this.write({ ...entry, verified });
     }
 
-    private save(): void {
-        const peers = [...this.entries].map(([fingerprint, entry]) => ({ fingerprint, ...entry }));
-        fs.mkdirSync(path.dirname(this.file), { recursive: true });
-        const tmp = `${this.file}.tmp`;
-        fs.writeFileSync(tmp, JSON.stringify({ version: 1, peers }, null, 2), { mode: 0o600 });
-        fs.renameSync(tmp, this.file);
+    private async write(contact: Contact): Promise<void> {
+        await this.contacts.save(contact);
+        this.entries.set(contact.fingerprint, contact);
     }
 }

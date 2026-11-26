@@ -6,7 +6,7 @@
 # the `test` and `package` jobs run, attaching the Windows, macOS and Linux installers to it.
 #
 # Every build is x64: cas-typescript-sdk has no arm64 binary yet, so Apple Silicon Macs run the
-# macOS build under Rosetta 2. Builds are unsigned (see README, "Installing a release").
+# macOS build under Rosetta 2. Builds are unsigned (see README, "Installing").
 
 name: Release
 

@@ -1,7 +1,7 @@
 import { MAX_CLOCK_SKEW_MS, type SignedRegistration, type VerifiedRegistration } from "@cas-p2p-chat/core/directory-record";
 import { and, count, desc, eq, isNotNull, like, lt, sql } from "drizzle-orm";
-import type { Database } from "./db.ts";
-import { peers } from "./schema.ts";
+import type { Database } from "../db.ts";
+import { peers } from "../schema.ts";
 
 /**
  * A listed peer, as stored. This is everything the directory keeps: a self-signed record of a
@@ -15,7 +15,30 @@ export interface StoredPeer {
     lastSeen: number;
 }
 
-export interface PeerStoreOptions {
+export type RegisterResult = "created" | "updated" | "stale";
+export type DeleteResult = "deleted" | "not-found" | "stale";
+
+/** The directory's listings. Route handlers depend on this; DrizzlePeerRepository implements it. */
+export interface PeerRepository {
+    /**
+     * Stores a verified registration. Returns "stale" if its timestamp isn't newer than the
+     * last one accepted for this peer, which is how replays are refused. Atomic per peer, so
+     * concurrent requests can't reorder the check.
+     */
+    register(verified: VerifiedRegistration, now: number): Promise<RegisterResult>;
+    /** Removes a peer's listing, keeping a tombstone so an older registration can't bring it back. */
+    delete(fingerprint: string, timestamp: number, now: number): Promise<DeleteResult>;
+    get(fingerprint: string): Promise<StoredPeer | null>;
+    /** Listed peers whose name contains `query` (case-insensitive), most recently seen first. */
+    search(query: string, limit: number): Promise<StoredPeer[]>;
+    /** Every listed peer, most recently seen first. For maintenance and tests; not served over HTTP. */
+    list(limit?: number): Promise<StoredPeer[]>;
+    count(): Promise<number>;
+    /** Drops expired tombstones and peers that haven't refreshed within the retention period. */
+    purge(now: number): Promise<void>;
+}
+
+export interface DrizzlePeerRepositoryOptions {
     /** Most peers kept; registering past it evicts the least recently seen. */
     maxPeers?: number;
     /** Peers that haven't refreshed their listing for this long are forgotten. */
@@ -32,26 +55,22 @@ export function searchKey(text: string): string {
 }
 
 /**
- * PostgreSQL-backed store (via Drizzle) of listed peers. Deleted peers leave a tombstone with
- * their last signed timestamp for a few minutes, so an old registration can't be replayed to
- * bring them back.
+ * Listings in PostgreSQL (node-postgres or PGlite), through Drizzle. Deleted peers leave a
+ * tombstone with their last signed timestamp for a few minutes, so an old registration can't be
+ * replayed to bring them back.
  */
-export class PeerStore {
+export class DrizzlePeerRepository implements PeerRepository {
     private readonly db: Database;
     private readonly maxPeers: number;
     private readonly retentionMs: number;
 
-    constructor(db: Database, options: PeerStoreOptions = {}) {
+    constructor(db: Database, options: DrizzlePeerRepositoryOptions = {}) {
         this.db = db;
         this.maxPeers = options.maxPeers ?? 10_000;
         this.retentionMs = options.retentionMs ?? 30 * DAY_MS;
     }
 
-    /**
-     * Stores a verified registration. Returns "stale" if its timestamp isn't newer than the
-     * last one accepted for this peer, which is how replays are refused.
-     */
-    register(verified: VerifiedRegistration, now: number): Promise<"created" | "updated" | "stale"> {
+    register(verified: VerifiedRegistration, now: number): Promise<RegisterResult> {
         const { fingerprint, record } = verified;
         return this.db.transaction(async (tx) => {
             // Lock the peer's row, so concurrent registrations for it are ordered.
@@ -95,8 +114,7 @@ export class PeerStore {
         });
     }
 
-    /** Removes a peer's listing, keeping a tombstone. */
-    delete(fingerprint: string, timestamp: number, now: number): Promise<"deleted" | "not-found" | "stale"> {
+    delete(fingerprint: string, timestamp: number, now: number): Promise<DeleteResult> {
         return this.db.transaction(async (tx) => {
             const [existing] = await tx.select().from(peers).where(eq(peers.fingerprint, fingerprint)).for("update");
             if (!existing || existing.record === null) {
@@ -118,7 +136,6 @@ export class PeerStore {
         return row && row.record !== null ? toPeer(row) : null;
     }
 
-    /** Listed peers whose name contains `query` (case-insensitive), most recently seen first. */
     async search(query: string, limit: number): Promise<StoredPeer[]> {
         // Backslash is PostgreSQL's default LIKE escape character.
         const pattern = `%${searchKey(query).replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
@@ -131,7 +148,6 @@ export class PeerStore {
         return rows.map(toPeer);
     }
 
-    /** Every listed peer, most recently seen first. For maintenance and tests; not served over HTTP. */
     async list(limit = 500): Promise<StoredPeer[]> {
         const rows = await this.db.select().from(peers).where(isNotNull(peers.record)).orderBy(desc(peers.lastSeen)).limit(limit);
         return rows.map(toPeer);
@@ -141,7 +157,6 @@ export class PeerStore {
         return this.countIn(this.db);
     }
 
-    /** Drops expired tombstones and peers that haven't refreshed within the retention period. */
     async purge(now: number): Promise<void> {
         // Once a tombstone outlives the clock-skew window, no replayable registration remains.
         await this.db.delete(peers).where(and(isNotNull(peers.deletedAt), lt(peers.deletedAt, now - 2 * MAX_CLOCK_SKEW_MS)));

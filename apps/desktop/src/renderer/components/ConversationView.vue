@@ -1,20 +1,22 @@
 <script setup lang="ts">
-import { mdiConnection, mdiLinkVariantOff, mdiLockOutline, mdiSend, mdiShieldCheck, mdiShieldOffOutline } from "@mdi/js";
+import { mdiConnection, mdiDeleteOutline, mdiLinkVariantOff, mdiLockOutline, mdiSend, mdiShieldCheck, mdiShieldOffOutline } from "@mdi/js";
 import { computed, nextTick, ref, watch } from "vue";
-import { Conversation, connectOrToast, disconnect, send, state, toggleVerified } from "../store";
+import { Conversation, clearHistory, connectOrToast, disconnect, send, state, toggleVerified } from "../store";
 import TrustChip from "./TrustChip.vue";
 
 const props = defineProps<{ conversation: Conversation }>();
 
 const draft = ref("");
 const sending = ref(false);
+const confirmClear = ref(false);
 const scroller = ref<HTMLElement | null>(null);
 
-const online = computed(() => props.conversation.peer !== null);
+/** A live chat session with them, not whether they're running the app. */
+const connected = computed(() => props.conversation.peer !== null);
 const verified = computed(() => props.conversation.trust.level === "verified");
 const canReconnect = computed(() => state.server.signaling === "online");
 const reconnecting = computed(() => state.connecting === props.conversation.fingerprint);
-const where = computed(() => (props.conversation.peer ? "connected (WebRTC)" : "offline"));
+const where = computed(() => (props.conversation.peer ? "connected (WebRTC)" : reconnecting.value ? "connecting…" : "not connected"));
 
 function clock(at: number): string {
     return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -29,6 +31,11 @@ async function submit(): Promise<void> {
         draft.value = "";
     }
     sending.value = false;
+}
+
+async function clear(): Promise<void> {
+    confirmClear.value = false;
+    await clearHistory(props.conversation);
 }
 
 function onKeydown(event: KeyboardEvent): void {
@@ -61,7 +68,7 @@ watch(() => props.conversation.fingerprint, () => {
             <div class="min-w-0 px-4">
                 <div class="flex items-center gap-2">
                     <span class="truncate text-lg font-medium" data-testid="peer-name">{{ conversation.name }}</span>
-                    <TrustChip data-testid="peer-badge" :trust="conversation.trust" :offline="!online" />
+                    <TrustChip data-testid="peer-badge" :trust="conversation.trust" :disconnected="!connected" />
                 </div>
                 <div class="text-xs text-muted">
                     <span class="font-mono">{{ conversation.fingerprint }}</span> · <span data-testid="peer-where">{{ where }}</span>
@@ -77,7 +84,7 @@ watch(() => props.conversation.fingerprint, () => {
                 >
                     {{ verified ? "Remove verification" : "Mark as verified" }}
                 </v-btn>
-                <v-btn v-if="online" data-testid="disconnect" variant="text" :prepend-icon="mdiLinkVariantOff" @click="disconnect(conversation)">
+                <v-btn v-if="connected" data-testid="disconnect" variant="text" :prepend-icon="mdiLinkVariantOff" @click="disconnect(conversation)">
                     Disconnect
                 </v-btn>
                 <v-btn
@@ -93,8 +100,28 @@ watch(() => props.conversation.fingerprint, () => {
                 >
                     Connect
                 </v-btn>
+                <v-btn
+                    data-testid="clear-history"
+                    :icon="mdiDeleteOutline"
+                    variant="text"
+                    title="Delete saved messages"
+                    @click="confirmClear = true"
+                />
             </template>
         </v-toolbar>
+
+        <v-dialog v-model="confirmClear" max-width="440">
+            <v-card title="Delete saved messages?">
+                <v-card-text>
+                    This deletes every message with {{ conversation.name }} saved on this device. It can't be undone,
+                    and it doesn't delete {{ conversation.name }}'s copies.
+                </v-card-text>
+                <v-card-actions class="justify-end">
+                    <v-btn @click="confirmClear = false">Cancel</v-btn>
+                    <v-btn data-testid="clear-history-confirm" color="error" @click="clear">Delete</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
 
         <v-alert
             v-if="conversation.trust.nameConflict && !verified"
@@ -117,7 +144,7 @@ watch(() => props.conversation.fingerprint, () => {
 
         <div ref="scroller" class="grow overflow-y-auto p-4" data-testid="messages">
             <div v-if="conversation.lines.length === 0" class="mx-auto my-6 max-w-[80%] text-center text-xs text-muted">
-                No messages this session. History isn't saved: it lives only in this window.
+                No messages yet. Messages are saved on this device, encrypted.
             </div>
             <template v-for="(line, index) in conversation.lines" :key="index">
                 <div v-if="line.kind === 'system'" class="mx-auto my-3 max-w-[80%] text-center text-xs text-muted">
@@ -140,8 +167,8 @@ watch(() => props.conversation.fingerprint, () => {
             <v-textarea
                 v-model="draft"
                 data-testid="composer"
-                :placeholder="online ? 'Write a message (Enter to send, Shift+Enter for a new line)' : `${conversation.name} is offline. Connect to keep chatting.`"
-                :disabled="!online"
+                :placeholder="connected ? 'Write a message (Enter to send, Shift+Enter for a new line)' : `Not connected to ${conversation.name}. Click Connect to keep chatting.`"
+                :disabled="!connected"
                 rows="1"
                 max-rows="6"
                 auto-grow
@@ -153,7 +180,7 @@ watch(() => props.conversation.fingerprint, () => {
                 data-testid="send"
                 :icon="mdiSend"
                 color="primary"
-                :disabled="!online || draft.trim() === ''"
+                :disabled="!connected || draft.trim() === ''"
                 :loading="sending"
                 @click="submit"
             />

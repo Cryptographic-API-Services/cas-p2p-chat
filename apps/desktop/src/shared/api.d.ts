@@ -24,19 +24,39 @@ interface ApiContact {
     name: string;
     firstSeen: string;
     lastSeen: string;
+    /** When the last saved message with them was sent or received, if any. */
+    lastMessageAt: number | null;
     trust: ApiTrust;
 }
 
 interface ApiSelf {
     name: string;
     fingerprint: string;
-    /** "os": the identity key is encrypted with the OS keychain (Electron safeStorage). */
+    /** "os": the identity key and the local database's key are encrypted with the OS keychain (Electron safeStorage). */
     keyProtection: "os" | "none";
+    /** Set if the local database couldn't be opened: this run keeps nothing. */
+    storageError: string | null;
 }
 
 interface ApiMessage {
     text: string;
     at: number;
+    /** Its ID in the saved history, or null if it couldn't be saved. */
+    id: number | null;
+}
+
+interface ApiSavedMessage {
+    id: number;
+    direction: "in" | "out";
+    text: string;
+    at: number;
+}
+
+interface ApiHistory {
+    /** Oldest first: the latest saved messages with a contact. */
+    messages: ApiSavedMessage[];
+    /** Saved messages that failed to decrypt, left out. */
+    unreadable: number;
 }
 
 /** The chat server: signaling (reach peers by fingerprint) plus the find-by-name directory. */
@@ -46,6 +66,8 @@ interface ApiServer {
     signaling: "off" | "connecting" | "online" | "error";
     directory: "off" | "listed" | "unlisted" | "error";
     error?: string;
+    /** The public server, offered when no server is joined. */
+    defaultUrl: string;
 }
 
 /** A directory search result. Its name is verified against the peer's own signature. */
@@ -79,6 +101,10 @@ interface ChatApi {
     connect(fingerprint: string): Promise<ApiPeer>;
     sendText(peerId: string, text: string): Promise<ApiMessage>;
     disconnect(peerId: string): Promise<void>;
+    /** The saved messages with a contact. */
+    loadHistory(fingerprint: string): Promise<ApiHistory>;
+    /** Deletes the saved messages with a contact. */
+    clearHistory(fingerprint: string): Promise<void>;
     setVerified(fingerprint: string, verified: boolean): Promise<ApiTrust>;
     copyText(text: string): Promise<void>;
     getServer(): Promise<ApiServer>;
