@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { mdiConnection, mdiLinkVariantOff, mdiLockOutline, mdiSend, mdiShieldCheck, mdiShieldOffOutline } from "@mdi/js";
+import { mdiConnection, mdiDeleteOutline, mdiLinkVariantOff, mdiLockOutline, mdiSend, mdiShieldCheck, mdiShieldOffOutline } from "@mdi/js";
 import { computed, nextTick, ref, watch } from "vue";
-import { Conversation, connectOrToast, disconnect, send, state, toggleVerified } from "../store";
+import { Conversation, clearHistory, connectOrToast, disconnect, send, state, toggleVerified } from "../store";
 import TrustChip from "./TrustChip.vue";
 
 const props = defineProps<{ conversation: Conversation }>();
 
 const draft = ref("");
 const sending = ref(false);
+const confirmClear = ref(false);
 const scroller = ref<HTMLElement | null>(null);
 
 const online = computed(() => props.conversation.peer !== null);
@@ -29,6 +30,11 @@ async function submit(): Promise<void> {
         draft.value = "";
     }
     sending.value = false;
+}
+
+async function clear(): Promise<void> {
+    confirmClear.value = false;
+    await clearHistory(props.conversation);
 }
 
 function onKeydown(event: KeyboardEvent): void {
@@ -93,8 +99,28 @@ watch(() => props.conversation.fingerprint, () => {
                 >
                     Connect
                 </v-btn>
+                <v-btn
+                    data-testid="clear-history"
+                    :icon="mdiDeleteOutline"
+                    variant="text"
+                    title="Delete saved messages"
+                    @click="confirmClear = true"
+                />
             </template>
         </v-toolbar>
+
+        <v-dialog v-model="confirmClear" max-width="440">
+            <v-card title="Delete saved messages?">
+                <v-card-text>
+                    This deletes every message with {{ conversation.name }} saved on this device. It can't be undone,
+                    and it doesn't delete {{ conversation.name }}'s copies.
+                </v-card-text>
+                <v-card-actions class="justify-end">
+                    <v-btn @click="confirmClear = false">Cancel</v-btn>
+                    <v-btn data-testid="clear-history-confirm" color="error" @click="clear">Delete</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
 
         <v-alert
             v-if="conversation.trust.nameConflict && !verified"
@@ -117,7 +143,7 @@ watch(() => props.conversation.fingerprint, () => {
 
         <div ref="scroller" class="grow overflow-y-auto p-4" data-testid="messages">
             <div v-if="conversation.lines.length === 0" class="mx-auto my-6 max-w-[80%] text-center text-xs text-muted">
-                No messages this session. History isn't saved: it lives only in this window.
+                No messages yet. Messages are saved on this device, encrypted.
             </div>
             <template v-for="(line, index) in conversation.lines" :key="index">
                 <div v-if="line.kind === 'system'" class="mx-auto my-3 max-w-[80%] text-center text-xs text-muted">

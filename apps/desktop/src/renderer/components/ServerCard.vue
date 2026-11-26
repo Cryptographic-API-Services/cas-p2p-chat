@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { mdiCircle, mdiMagnify, mdiServerNetwork } from "@mdi/js";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { connectOrToast, relativeTime, search, setListed, setServer, shortFingerprint, state } from "../store";
 import TrustChip from "./TrustChip.vue";
 
@@ -12,6 +12,11 @@ const server = computed(() => state.server);
 const connecting = computed(() => state.connecting);
 // Read through computeds: vue-tsc mistypes the imported reactive `state` inside <template v-else>.
 const found = computed(() => state.search);
+
+// Offer the public server whenever none is joined.
+watch(() => server.value.defaultUrl, (value) => {
+    url.value ||= value;
+}, { immediate: true });
 
 const signaling = computed(() => {
     switch (server.value.signaling) {
@@ -37,7 +42,7 @@ async function join(): Promise<void> {
     error.value = await setServer(url.value, listed.value);
     busy.value = false;
     if (!error.value) {
-        url.value = "";
+        url.value = server.value.defaultUrl;
     }
 }
 

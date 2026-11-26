@@ -33,7 +33,7 @@ import { copyText, state } from "../store";
                 variant="tonal"
                 density="compact"
                 class="mt-3"
-                text="This system has no secure key storage, so your identity key is saved unencrypted."
+                text="This system has no secure key storage, so your identity key, and the key to your saved contacts and messages, are stored unencrypted."
             />
         </v-card-text>
     </v-card>

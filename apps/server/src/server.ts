@@ -24,7 +24,7 @@ import type { AddressInfo } from "node:net";
 import { createChatServer } from "./app.ts";
 import { openDatabase } from "./db.ts";
 import { managedIdentityToken } from "./managed-identity.ts";
-import { PeerStore } from "./peer-store.ts";
+import { DrizzlePeerRepository } from "./repositories/peer-repository.ts";
 
 const port = Number(process.env.PORT ?? 8787);
 const host = process.env.HOST ?? "0.0.0.0";
@@ -37,10 +37,10 @@ const iceServers = process.env.ICE_SERVERS
 
 const password = process.env.USE_MANAGED_IDENTITY ? managedIdentityToken(process.env.MANAGED_IDENTITY_CLIENT_ID) : undefined;
 const database = await openDatabase(databaseUrl, password);
-const store = new PeerStore(database.db);
-const { server, presence } = createChatServer({ store, iceServers, trustProxy });
+const peers = new DrizzlePeerRepository(database.db);
+const { server, presence } = createChatServer({ peers, iceServers, trustProxy });
 
-const purge = () => store.purge(Date.now()).catch((err: Error) => console.error(`Purge failed: ${err.message}`));
+const purge = () => peers.purge(Date.now()).catch((err: Error) => console.error(`Purge failed: ${err.message}`));
 await purge();
 setInterval(purge, 60 * 60_000).unref();
 
@@ -51,7 +51,7 @@ server.on("error", (err) => {
 server.listen(port, host, async () => {
     const bound = (server.address() as AddressInfo).port;
     console.log(`CAS P2P Chat server on http://${host}:${bound}`);
-    console.log(`  directory: ${database.description} (${await store.count()} listed; names and keys only, no IP addresses)`);
+    console.log(`  directory: ${database.description} (${await peers.count()} listed; names and keys only, no IP addresses)`);
     console.log(`  signaling: ws://${host}:${bound}/signal/peerjs (in memory, ${presence.size} online)`);
     console.log(`  ICE servers for clients: ${iceServers.map((s) => s.urls).join(", ") || "none"}`);
 });

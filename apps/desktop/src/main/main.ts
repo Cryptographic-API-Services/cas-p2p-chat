@@ -1,11 +1,18 @@
-import { BrowserWindow, app, clipboard, ipcMain, safeStorage, session, type IpcMainInvokeEvent } from "electron";
+import { BrowserWindow, app, clipboard, ipcMain, session, type IpcMainInvokeEvent } from "electron";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { ChatNode, PeerSummary } from "@cas-p2p-chat/core/chat-node";
-import { Identity, createIdentity, parseIdentity, serializeIdentity } from "@cas-p2p-chat/core/identity";
+import type { Bytes } from "@cas-p2p-chat/core/bytes";
+import { ChatMessage, ChatNode, PeerSummary } from "@cas-p2p-chat/core/chat-node";
+import { createIdentity, parseIdentity, serializeIdentity } from "@cas-p2p-chat/core/identity";
 import { fingerprintToPeerId, normalizeFingerprint } from "@cas-p2p-chat/core/peer-id";
+import { SqliteContactRepository } from "@cas-p2p-chat/core/repositories/contact-repository";
+import { importLegacyFiles } from "@cas-p2p-chat/core/repositories/legacy-files";
+import { LocalDatabase, createStorageKey, parseStorageKey, serializeStorageKey } from "@cas-p2p-chat/core/repositories/local-database";
+import { MessageDirection, SqliteMessageRepository } from "@cas-p2p-chat/core/repositories/message-repository";
+import { SqliteSettingsRepository } from "@cas-p2p-chat/core/repositories/settings-repository";
 import { TrustStore } from "@cas-p2p-chat/core/trust-store";
+import { SealedFileKeyRepository, loadOrCreateKey } from "./repositories/key-repository";
 import { ServerState, ServerSync } from "./server-sync";
 import { WebRtcBridge, acceptIncoming } from "./webrtc-bridge";
 
@@ -15,6 +22,12 @@ function argValue(name: string): string | undefined {
 }
 
 const smokeTest = process.argv.includes("--smoke-test");
+
+/**
+ * The public server. Until the user picks another or leaves it, the app joins it at startup,
+ * unlisted: reachable by fingerprint, but findable by name only once the user opts in.
+ */
+const DEFAULT_SERVER_URL = "https://chatp2p.cryptographicapiservices.com";
 
 // --profile=<name> gives a separate identity, contacts and settings, so two instances can run
 // side by side on one machine. The smoke test uses a throwaway directory.
@@ -28,75 +41,24 @@ if (smokeTest) {
     app.setPath("userData", `${app.getPath("userData")}-${profile}`);
 }
 
-// Identity
+// Storage: the two keys in their own files, sealed with the OS keychain; everything else (settings,
+// contacts, messages) in the encrypted local database, through repositories.
 
-interface LoadedIdentity {
-    identity: Identity;
-    keyProtection: "os" | "none";
-}
+/** Saved messages loaded when a conversation is opened. */
+const HISTORY_LIMIT = 1000;
 
-/** True when safeStorage really encrypts (on Linux it can fall back to a hard-coded key). */
-async function osEncryptionAvailable(): Promise<boolean> {
-    if (!(await safeStorage.isAsyncEncryptionAvailable())) {
-        return false;
-    }
-    return process.platform !== "linux" || safeStorage.getSelectedStorageBackend() !== "basic_text";
-}
-
-async function writeIdentity(file: string, identity: Identity): Promise<"os" | "none"> {
-    const json = serializeIdentity(identity);
-    const protect = await osEncryptionAvailable();
-    const stored = protect
-        ? { protection: "safeStorage", data: (await safeStorage.encryptStringAsync(json)).toString("base64") }
-        : { protection: "none", data: json };
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(stored), { mode: 0o600 });
-    return protect ? "os" : "none";
-}
-
-/** Loads the device identity, creating it on first run. The private key is sealed with the OS keychain when possible. */
-async function loadOrCreateIdentity(dir: string): Promise<LoadedIdentity> {
-    const file = path.join(dir, "identity.json");
-    if (!fs.existsSync(file)) {
-        const identity = createIdentity();
-        return { identity, keyProtection: await writeIdentity(file, identity) };
-    }
-    const stored = JSON.parse(fs.readFileSync(file, "utf8")) as { protection?: string; data?: string };
-    if (stored.protection !== "safeStorage") {
-        return { identity: parseIdentity(stored.data ?? ""), keyProtection: "none" };
-    }
-    const { result, shouldReEncrypt } = await safeStorage.decryptStringAsync(Buffer.from(stored.data ?? "", "base64"));
-    const identity = parseIdentity(result);
-    // The OS rotated its key: re-seal the identity under the new one.
-    const keyProtection = shouldReEncrypt ? await writeIdentity(file, identity) : "os";
-    return { identity, keyProtection };
-}
-
-// Settings
-
-interface Settings {
-    serverUrl: string | null;
-    listed: boolean;
-}
-
-function settingsFile(): string {
-    return path.join(app.getPath("userData"), "settings.json");
-}
-
-function loadSettings(): Settings {
+/**
+ * Opens the local database and applies pending migrations. If that fails, runs on an in-memory
+ * one, so the app still works, and says why.
+ */
+async function openLocalDatabase(file: string, key: Bytes): Promise<{ local: LocalDatabase; storageError: string | null }> {
     try {
-        const data = JSON.parse(fs.readFileSync(settingsFile(), "utf8")) as Partial<Settings>;
-        return {
-            serverUrl: typeof data.serverUrl === "string" ? data.serverUrl : null,
-            listed: data.listed !== false,
-        };
-    } catch {
-        return { serverUrl: null, listed: true };
+        return { local: await LocalDatabase.open(file, key), storageError: null };
+    } catch (err) {
+        const message = (err as Error).message;
+        console.error(`Could not open ${file}: ${message}`);
+        return { local: await LocalDatabase.open(":memory:", key), storageError: message };
     }
-}
-
-function saveSettings(settings: Settings): void {
-    fs.writeFileSync(settingsFile(), JSON.stringify(settings, null, 2));
 }
 
 let mainWindow: BrowserWindow | null = null;
@@ -105,16 +67,38 @@ async function start(): Promise<void> {
     // No page in this app needs camera, notifications, clipboard-read or anything else.
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
 
-    const { identity, keyProtection } = await loadOrCreateIdentity(app.getPath("userData"));
-    const trust = new TrustStore(path.join(app.getPath("userData"), "known-peers.json"));
-    const settings = loadSettings();
+    const userData = app.getPath("userData");
+    const identityKey = await loadOrCreateKey(
+        new SealedFileKeyRepository(path.join(userData, "identity.json"), { serialize: serializeIdentity, parse: parseIdentity }),
+        createIdentity,
+    );
+    const storageKey = await loadOrCreateKey(
+        new SealedFileKeyRepository(path.join(userData, "storage-key.json"), { serialize: serializeStorageKey, parse: parseStorageKey }),
+        createStorageKey,
+    );
+    const identity = identityKey.value;
+    const keyProtection = identityKey.protection === "os" && storageKey.protection === "os" ? "os" : "none";
+    const { local, storageError } = await openLocalDatabase(path.join(userData, "chat.sqlite"), storageKey.value);
+    const contacts = new SqliteContactRepository(local);
+    const messages = new SqliteMessageRepository(local);
+    const settingsStore = new SqliteSettingsRepository(local);
+    // Never into a stand-in in-memory database: the import deletes the files it read.
+    if (!storageError) {
+        try {
+            await importLegacyFiles(userData, { contacts, settings: settingsStore });
+        } catch (err) {
+            console.error(`Could not import contacts and settings from an older version: ${(err as Error).message}`);
+        }
+    }
+    const trust = await TrustStore.load(contacts);
+    const settings = (await settingsStore.load()) ?? { serverUrl: DEFAULT_SERVER_URL, listed: false };
     const name = argValue("name") ?? os.userInfo().username;
     const node = new ChatNode({ identity, name });
 
     // Peers connected this run, kept after they disconnect so their history stays addressable.
     const peers = new Map<string, PeerSummary>();
     const toApiPeer = (peer: PeerSummary): ApiPeer => ({ ...peer, trust: trust.get(peer.fingerprint, peer.name) });
-    const toApiServer = (state: ServerState): ApiServer => ({ ...state });
+    const toApiServer = (state: ServerState): ApiServer => ({ ...state, defaultUrl: DEFAULT_SERVER_URL });
     const send = (event: ApiEvent) => mainWindow?.webContents.send("chat:event", event);
 
     // Every connection is WebRTC, set up through the server's signaling and dialed by fingerprint.
@@ -122,14 +106,32 @@ async function start(): Promise<void> {
     acceptIncoming(bridge, node);
     const server = new ServerSync(identity, () => node.name, bridge, (state) => send({ type: "server-changed", server: toApiServer(state) }));
 
-    node.on("peer-connected", (peer) => {
+    node.on("peer-connected", async (peer) => {
         peers.set(peer.id, peer);
-        const info = trust.observe(peer.fingerprint, peer.name);
+        let info: ApiTrust;
+        try {
+            info = await trust.observe(peer.fingerprint, peer.name);
+        } catch (err) {
+            console.error(`Could not save a contact: ${(err as Error).message}`);
+            info = trust.get(peer.fingerprint, peer.name);
+        }
         send({ type: "peer-connected", peer: { ...peer, trust: info } });
     });
     node.on("peer-disconnected", (peerId, reason) => send({ type: "peer-disconnected", peerId, reason }));
     node.on("handshake-failed", (_label, reason) => send({ type: "handshake-failed", reason }));
-    node.on("message", (peerId, message) => send({ type: "message", peerId, message }));
+    /** Adds a message to the saved history. If that fails, chat goes on; the message just isn't kept. */
+    const save = async (fingerprint: string, direction: MessageDirection, message: ChatMessage): Promise<ApiMessage> => {
+        try {
+            return { ...message, id: (await messages.add(fingerprint, direction, message.text, message.at)).id };
+        } catch (err) {
+            console.error(`Could not save a message: ${(err as Error).message}`);
+            return { ...message, id: null };
+        }
+    };
+    node.on("message", async (peerId, message) => {
+        const peer = peers.get(peerId);
+        send({ type: "message", peerId, message: peer ? await save(peer.fingerprint, "in", message) : { ...message, id: null } });
+    });
 
     /** Connects to a fingerprint through the server. */
     const connect = async (target: string): Promise<PeerSummary> => {
@@ -156,6 +158,14 @@ async function start(): Promise<void> {
             return fn(...args);
         });
     };
+    /** The canonical fingerprint of a contact, from an untrusted argument. */
+    const contactFingerprint = (fingerprint: unknown): string => {
+        const canonical = normalizeFingerprint(String(fingerprint));
+        if (!canonical || !trust.list().some((c) => c.fingerprint === canonical)) {
+            throw new Error("unknown contact");
+        }
+        return canonical;
+    };
     const peerFor = (peerId: unknown): PeerSummary => {
         const peer = typeof peerId === "string" ? peers.get(peerId) : undefined;
         if (!peer) {
@@ -168,22 +178,28 @@ async function start(): Promise<void> {
         name: node.name,
         fingerprint: node.fingerprint,
         keyProtection,
+        storageError,
     }));
     handle("chat:list-peers", () => node.listPeers().map(toApiPeer));
-    handle("chat:list-contacts", (): ApiContact[] => trust.list());
+    handle("chat:list-contacts", (): Promise<ApiContact[]> =>
+        Promise.all(trust.list().map(async (contact) => ({ ...contact, lastMessageAt: await messages.lastMessageAt(contact.fingerprint) }))),
+    );
     handle("chat:connect", async (target) => toApiPeer(await connect(String(target))));
-    handle("chat:send-text", (peerId, text) => node.sendText(peerFor(peerId).id, String(text)));
+    handle("chat:send-text", (peerId, text): Promise<ApiMessage> => {
+        const peer = peerFor(peerId);
+        return save(peer.fingerprint, "out", node.sendText(peer.id, String(text)));
+    });
     handle("chat:disconnect", (peerId) => node.disconnect(peerFor(peerId).id));
-    handle("chat:set-verified", (fingerprint, verified) => {
-        const canonical = normalizeFingerprint(String(fingerprint));
-        const contact = canonical ? trust.list().find((c) => c.fingerprint === canonical) : undefined;
-        if (!contact) {
-            throw new Error("unknown contact");
-        }
-        trust.setVerified(contact.fingerprint, verified === true);
-        const info = trust.get(contact.fingerprint, contact.name);
-        send({ type: "trust-changed", fingerprint: contact.fingerprint, trust: info });
-        return info;
+    handle("chat:load-history", (fingerprint): Promise<ApiHistory> => messages.history(contactFingerprint(fingerprint), HISTORY_LIMIT));
+    handle("chat:clear-history", async (fingerprint) => {
+        await messages.clear(contactFingerprint(fingerprint));
+    });
+    handle("chat:set-verified", async (fingerprint, verified) => {
+        const canonical = contactFingerprint(fingerprint);
+        await trust.setVerified(canonical, verified === true);
+        const contact = trust.list().find((c) => c.fingerprint === canonical)!;
+        send({ type: "trust-changed", fingerprint: canonical, trust: contact.trust });
+        return contact.trust;
     });
     handle("chat:copy-text", (text) => clipboard.writeText(String(text)));
 
@@ -192,13 +208,13 @@ async function start(): Promise<void> {
         const value = typeof url === "string" && url.trim() !== "" ? url : null;
         const state = await server.setServer(value, listed !== false);
         Object.assign(settings, { serverUrl: state.url, listed: state.listed });
-        saveSettings(settings);
+        await settingsStore.save(settings);
         return toApiServer(state);
     });
     handle("chat:set-listed", async (listed) => {
         const state = await server.setListed(listed === true);
         settings.listed = state.listed;
-        saveSettings(settings);
+        await settingsStore.save(settings);
         return toApiServer(state);
     });
     handle("chat:search-directory", async (query): Promise<ApiSearchResult> => {
@@ -209,6 +225,7 @@ async function start(): Promise<void> {
     app.on("before-quit", () => {
         server.stop();
         node.close();
+        local.close();
     });
 
     mainWindow = new BrowserWindow({

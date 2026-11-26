@@ -20,7 +20,7 @@ import { fingerprintToPeerId, normalizeFingerprint, peerIdToFingerprint } from "
 import { SIGNALING_TOKEN_MAX_AGE_MS, checkSignalingToken, createSignalingToken } from "@cas-p2p-chat/core/signaling-token";
 import { createChatServer } from "../src/app.ts";
 import { type DatabaseHandle, openDatabase } from "../src/db.ts";
-import { PeerStore } from "../src/peer-store.ts";
+import { DrizzlePeerRepository } from "../src/repositories/peer-repository.ts";
 import { peers } from "../src/schema.ts";
 import { verifySignalingRequest } from "../src/signaling.ts";
 
@@ -48,9 +48,9 @@ before(async () => {
 });
 after(() => database.close());
 
-async function emptyStore(options?: ConstructorParameters<typeof PeerStore>[1]): Promise<PeerStore> {
+async function emptyRepository(options?: ConstructorParameters<typeof DrizzlePeerRepository>[1]): Promise<DrizzlePeerRepository> {
     await database.db.delete(peers);
-    return new PeerStore(database.db, options);
+    return new DrizzlePeerRepository(database.db, options);
 }
 
 describe("peer IDs and fingerprints", () => {
@@ -143,16 +143,16 @@ describe("directory records", () => {
 
 describe("chat server API", () => {
     let now = Date.now();
-    let store: PeerStore;
+    let repository: DrizzlePeerRepository;
     let server: Server;
     let url: string;
 
     beforeEach(async () => {
         server?.close();
         now = Date.now();
-        store = await emptyStore();
+        repository = await emptyRepository();
         const chat = createChatServer({
-            store,
+            peers: repository,
             signaling: false,
             iceServers: [{ urls: "stun:stun.example.com:3478" }],
             now: () => now,
@@ -194,7 +194,7 @@ describe("chat server API", () => {
         assert.equal((await fetch(`${url}/v1/peers/${compact}`)).status, 200);
         assert.equal((await fetch(`${url}/v1/peers/${"0".repeat(32)}`)).status, 404);
 
-        assert.doesNotMatch(JSON.stringify(await store.list()), IP_PATTERN);
+        assert.doesNotMatch(JSON.stringify(await repository.list()), IP_PATTERN);
     });
 
     it("refuses replays, stale timestamps, bad signatures, extra fields and junk", async () => {
@@ -223,41 +223,41 @@ describe("chat server API", () => {
         await call(`${url}/v1/peers`, record);
         now += 10;
         assert.equal((await call(`${url}/v1/peers`, createDeletion(alice, now), "DELETE")).status, 204);
-        assert.equal(await store.count(), 0);
+        assert.equal(await repository.count(), 0);
         assert.equal((await call(`${url}/v1/peers`, record)).status, 409, "replayed registration");
         assert.equal((await call(`${url}/v1/peers`, createDeletion(alice, now + 1), "DELETE")).status, 404);
         assert.equal((await call(`${url}/v1/peers`, createRegistration(alice, "Alice", now + 2))).status, 201);
     });
 });
 
-describe("peer store", () => {
+describe("DrizzlePeerRepository", () => {
     it("evicts the least recently seen, and purges stale listings", async () => {
-        const store = await emptyStore({ maxPeers: 2, retentionMs: 1_000 });
+        const repository = await emptyRepository({ maxPeers: 2, retentionMs: 1_000 });
         const t = Date.now();
         for (const i of [0, 1, 2]) {
-            await store.register(verifyRegistration(createRegistration(createIdentity(), `P${i}`, t)), t + i);
+            await repository.register(verifyRegistration(createRegistration(createIdentity(), `P${i}`, t)), t + i);
         }
-        assert.deepEqual((await store.list()).map((p) => p.record.name), ["P2", "P1"], "P0 was evicted");
-        await store.purge(t + 10_000);
-        assert.equal(await store.count(), 0);
+        assert.deepEqual((await repository.list()).map((p) => p.record.name), ["P2", "P1"], "P0 was evicted");
+        await repository.purge(t + 10_000);
+        assert.equal(await repository.count(), 0);
     });
 
     it("accepts exactly one of several concurrent copies of a registration", async () => {
-        const store = await emptyStore();
+        const repository = await emptyRepository();
         const verified = verifyRegistration(createRegistration(createIdentity(), "Alice"));
-        const results = await Promise.all([1, 2, 3, 4, 5].map(() => store.register(verified, Date.now())));
+        const results = await Promise.all([1, 2, 3, 4, 5].map(() => repository.register(verified, Date.now())));
         assert.deepEqual(results.sort(), ["created", "stale", "stale", "stale", "stale"]);
     });
 
     it("persists in a PGlite directory", async () => {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cas-p2p-chat-store-"));
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cas-p2p-chat-repository-"));
         try {
             const first = await openDatabase(`pglite:${dir}`);
-            await new PeerStore(first.db).register(verifyRegistration(createRegistration(createIdentity(), "Alice")), Date.now());
+            await new DrizzlePeerRepository(first.db).register(verifyRegistration(createRegistration(createIdentity(), "Alice")), Date.now());
             await first.close();
 
             const reopened = await openDatabase(`pglite:${dir}`);
-            assert.deepEqual((await new PeerStore(reopened.db).list()).map((p) => p.record.name), ["Alice"]);
+            assert.deepEqual((await new DrizzlePeerRepository(reopened.db).list()).map((p) => p.record.name), ["Alice"]);
             await reopened.close();
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });
@@ -269,7 +269,7 @@ describe("DirectoryClient", () => {
     let server: Server;
     let url: string;
     before(async () => {
-        server = createChatServer({ store: await emptyStore(), signaling: false }).server;
+        server = createChatServer({ peers: await emptyRepository(), signaling: false }).server;
         url = await listen(server);
     });
     after(() => server.close());

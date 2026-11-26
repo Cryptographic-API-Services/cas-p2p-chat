@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
 import { after, describe, it } from "node:test";
 import { type ChatMessage, ChatNode, type PeerSummary } from "../src/chat-node.ts";
 import { createIdentity, fingerprint } from "../src/identity.ts";
+import { SqliteContactRepository } from "../src/repositories/contact-repository.ts";
+import { LocalDatabase, createStorageKey } from "../src/repositories/local-database.ts";
 import { TrustStore } from "../src/trust-store.ts";
 import { linkPair } from "./helpers/memory-link.ts";
 
@@ -131,23 +130,23 @@ describe("ChatNode", () => {
 });
 
 describe("TrustStore", () => {
-    it("tracks new, known and verified peers, lists contacts, and flags reused names", () => {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cas-p2p-chat-test-"));
+    it("tracks new, known and verified peers, lists contacts, and flags reused names", async () => {
+        const local = await LocalDatabase.open(":memory:", createStorageKey());
         try {
-            const file = path.join(dir, "known-peers.json");
-            const store = new TrustStore(file);
-            assert.deepEqual(store.observe("AAAA", "Bob"), { level: "new", nameConflict: false });
-            assert.deepEqual(store.observe("AAAA", "Bob"), { level: "known", nameConflict: false });
-            store.setVerified("AAAA", true);
+            const contacts = new SqliteContactRepository(local);
+            const store = await TrustStore.load(contacts);
+            assert.deepEqual(await store.observe("AAAA", "Bob"), { level: "new", nameConflict: false });
+            assert.deepEqual(await store.observe("AAAA", "Bob"), { level: "known", nameConflict: false });
+            await store.setVerified("AAAA", true);
 
-            const reloaded = new TrustStore(file);
+            const reloaded = await TrustStore.load(contacts);
             assert.deepEqual(reloaded.get("AAAA", "Bob"), { level: "verified", nameConflict: false });
             // A different key using the same name is flagged.
-            assert.deepEqual(reloaded.observe("BBBB", "Bob"), { level: "new", nameConflict: true });
+            assert.deepEqual(await reloaded.observe("BBBB", "Bob"), { level: "new", nameConflict: true });
             assert.deepEqual(reloaded.list().map((c) => [c.fingerprint, c.trust.level]), [["AAAA", "verified"], ["BBBB", "known"]]);
-            assert.throws(() => reloaded.setVerified("CCCC", true), /unknown peer/);
+            await assert.rejects(reloaded.setVerified("CCCC", true), /unknown peer/);
         } finally {
-            fs.rmSync(dir, { recursive: true, force: true });
+            local.close();
         }
     });
 });
