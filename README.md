@@ -157,6 +157,7 @@ How the public server is deployed on Azure is in [CLAUDE.md](CLAUDE.md#azure-dep
 ```bash
 npm test         # type-check, then the core and server tests
 npm run smoke    # build, then drive the real app end to end
+npm run dev      # the app with hot reload: UI changes show up without restarting
 ```
 
 `packages/core` is the shared protocol code, `apps/server` the server and `apps/desktop` the

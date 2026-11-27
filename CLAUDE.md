@@ -13,7 +13,7 @@ internals, tests, ideas) here instead. `CLAUDE.md` is the contributor reference 
 architecture, conventions, deployment). Update them when you:
 
 - add, rename or remove an npm script, command-line option (`--name`, `--profile`, `--server`,
-  `--smoke-test`, `--screenshot`) or server environment variable (`PORT`, `HOST`,
+  `--smoke-test`, `--screenshot`, `--dev-server`) or server environment variable (`PORT`, `HOST`,
   `DATABASE_URL`, `ICE_SERVERS`, `TRUST_PROXY`, `USE_MANAGED_IDENTITY`,
   `MANAGED_IDENTITY_CLIENT_ID`);
 - change the wire protocol, the directory record format or API, signaling, what the server
@@ -52,6 +52,8 @@ npm run typecheck    # tsc -b packages/core && tsc -p apps/server
 npm run server       # chat server on :8787, straight from .ts (directory in PGlite, apps/server/directory-data/)
 npm start            # build, then run the app
 npm run start:alice  # profile "alice", joins http://127.0.0.1:8787; start:bob likewise (run the server first)
+npm run dev          # build, then the app with the UI from Vite's dev server: .vue/CSS/store.ts changes hot-reload
+npm run dev -- --profile=alice --server=http://127.0.0.1:8787   # extra arguments go to Electron
 npm test             # typecheck, then node --test on the .ts tests of core and server (no build, no Electron)
 npm run smoke        # build, then launch the real app hidden and drive the Vue UI end to end
 npm run smoke -- --screenshot=out.png   # also save a PNG of the window (path relative to apps/desktop)
@@ -407,6 +409,14 @@ deploy/azure/         setup.sh (Azure CLI: resource group, identity, registry, C
 - `vue-tsc` mistypes the imported reactive `state` as a ref inside `<template v-else>` blocks
   (`Property 'value' does not exist`). Read it through a `computed` there, as `ServerCard.vue`
   does with `found`.
+- **Hot reload** (`npm run dev`, `apps/desktop/scripts/dev.mjs`): builds once, starts Vite's
+  dev server on `localhost:5173` (`strictPort`) and runs Electron with `--dev-server=<url>`, so
+  the main window loads `index.html` from it instead of `dist/`. Only the UI reloads: the main
+  process, preloads and the transport page still come from `dist/`, so restart after changing
+  them. `main.ts` ignores `--dev-server` when `app.isPackaged` and accepts only
+  `http://localhost`, `127.0.0.1` or `[::1]`. The one CSP change is dev-only: a Vite plugin
+  (`apply: "serve"`) adds `connect-src ws://localhost:5173` for the hot-reload socket; built
+  pages keep no `connect-src`.
 - The smoke test (`apps/desktop/src/main/smoke-test.ts`) finds elements by `data-testid`. When you rename or
   restructure UI, keep those attributes or update the smoke test in the same change.
 

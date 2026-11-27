@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { open, shortFingerprint, sortedConversations, state } from "../store";
+import ProfileAvatar from "./ProfileAvatar.vue";
 import TrustChip from "./TrustChip.vue";
+
+const getAvatar = (fingerprint: string) => {
+    return state.avatars.get(fingerprint);
+}
 </script>
 
 <template>
@@ -16,8 +21,9 @@ import TrustChip from "./TrustChip.vue";
                 color="primary"
                 @click="open(conversation.fingerprint)"
             >
-                <v-list-item-title :class="{ 'text-muted': !conversation.peer }">
-                    {{ conversation.name }}
+            <v-list-item-title :class="{ 'text-muted': !conversation.peer }">
+                <ProfileAvatar data-testid="peer-avatar" :avatar="getAvatar(conversation.fingerprint)" :name="conversation.name" :size="40" class="flex-none" />
+                <span class="ml-1">{{ conversation.name }}</span>
                 </v-list-item-title>
                 <v-list-item-subtitle>
                     <span class="font-mono">{{ shortFingerprint(conversation.fingerprint) }}</span>

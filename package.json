@@ -15,6 +15,7 @@
     "build": "npm run clean && npm run typecheck && npm run build -w @cas-p2p-chat/desktop",
     "server": "npm start -w @cas-p2p-chat/server",
     "start": "npm start -w @cas-p2p-chat/desktop",
+    "dev": "npm run dev -w @cas-p2p-chat/desktop --",
     "start:alice": "npm run start:alice -w @cas-p2p-chat/desktop",
     "start:bob": "npm run start:bob -w @cas-p2p-chat/desktop",
     "test": "npm run typecheck && npm test -w @cas-p2p-chat/core -w @cas-p2p-chat/server",

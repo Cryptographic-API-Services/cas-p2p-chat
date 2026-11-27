@@ -25,6 +25,19 @@ function argValue(name: string): string | undefined {
 
 const smokeTest = process.argv.includes("--smoke-test");
 
+/** `npm run dev`: the UI comes from Vite's dev server on this machine. Ignored in installed builds. */
+function devServerUrl(): string | undefined {
+    const value = argValue("dev-server");
+    if (!value || app.isPackaged) {
+        return undefined;
+    }
+    const url = new URL(value);
+    if (url.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) {
+        throw new Error("--dev-server must be an http://localhost URL");
+    }
+    return url.href;
+}
+
 /**
  * The public server. Until the user picks another or leaves it, the app joins it at startup,
  * unlisted: reachable by fingerprint, but findable by name only once the user opts in.
@@ -282,7 +295,13 @@ async function start(): Promise<void> {
         },
     });
     mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
+    const devUrl = devServerUrl();
+    mainWindow.webContents.on("will-navigate", (event) => {
+        // Vite reloads the page (location.reload) when it can't hot-swap a change.
+        if (!(devUrl && new URL(event.url).origin === new URL(devUrl).origin)) {
+            event.preventDefault();
+        }
+    });
     // The hidden transport window lives as long as the app, so close everything with this window.
     mainWindow.on("closed", () => {
         mainWindow = null;
@@ -300,7 +319,11 @@ async function start(): Promise<void> {
     } else {
         mainWindow.once("ready-to-show", () => mainWindow?.show());
     }
-    await mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+    if (devUrl) {
+        await mainWindow.loadURL(new URL("index.html", devUrl).href);
+    } else {
+        await mainWindow.loadFile(path.join(__dirname, "..", "renderer", "index.html"));
+    }
 }
 
 app.whenReady()
