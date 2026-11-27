@@ -2,10 +2,12 @@ import { BrowserWindow, app, clipboard, ipcMain, session, type IpcMainInvokeEven
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { validateAvatar } from "@cas-p2p-chat/core/avatar";
 import type { Bytes } from "@cas-p2p-chat/core/bytes";
 import { ChatMessage, ChatNode, PeerSummary } from "@cas-p2p-chat/core/chat-node";
 import { createIdentity, parseIdentity, serializeIdentity } from "@cas-p2p-chat/core/identity";
 import { fingerprintToPeerId, normalizeFingerprint } from "@cas-p2p-chat/core/peer-id";
+import { SqliteAvatarRepository } from "@cas-p2p-chat/core/repositories/avatar-repository";
 import { SqliteContactRepository } from "@cas-p2p-chat/core/repositories/contact-repository";
 import { importLegacyFiles } from "@cas-p2p-chat/core/repositories/legacy-files";
 import { LocalDatabase, createStorageKey, parseStorageKey, serializeStorageKey } from "@cas-p2p-chat/core/repositories/local-database";
@@ -82,6 +84,7 @@ async function start(): Promise<void> {
     const contacts = new SqliteContactRepository(local);
     const messages = new SqliteMessageRepository(local);
     const settingsStore = new SqliteSettingsRepository(local);
+    const avatars = new SqliteAvatarRepository(local);
     // Never into a stand-in in-memory database: the import deletes the files it read.
     if (!storageError) {
         try {
@@ -94,6 +97,8 @@ async function start(): Promise<void> {
     const settings = (await settingsStore.load()) ?? { serverUrl: DEFAULT_SERVER_URL, listed: false };
     const name = argValue("name") ?? os.userInfo().username;
     const node = new ChatNode({ identity, name });
+    // Our own avatar is kept in the same table as contacts', under our own fingerprint.
+    node.setAvatar(await avatars.get(node.fingerprint));
 
     // Peers connected this run, kept after they disconnect so their history stays addressable.
     const peers = new Map<string, PeerSummary>();
@@ -128,6 +133,19 @@ async function start(): Promise<void> {
             return { ...message, id: null };
         }
     };
+    // A peer's avatar, already validated by core. Kept so it shows when they're not connected.
+    node.on("profile", async (peerId, avatar) => {
+        const peer = peers.get(peerId);
+        if (!peer) {
+            return;
+        }
+        try {
+            await avatars.save(peer.fingerprint, avatar);
+        } catch (err) {
+            console.error(`Could not save an avatar: ${(err as Error).message}`);
+        }
+        send({ type: "avatar-changed", fingerprint: peer.fingerprint, avatar });
+    });
     node.on("message", async (peerId, message) => {
         const peer = peers.get(peerId);
         send({ type: "message", peerId, message: peer ? await save(peer.fingerprint, "in", message) : { ...message, id: null } });
@@ -174,15 +192,20 @@ async function start(): Promise<void> {
         return peer;
     };
 
-    handle("chat:get-self", (): ApiSelf => ({
+    handle("chat:get-self", async (): Promise<ApiSelf> => ({
         name: node.name,
         fingerprint: node.fingerprint,
         keyProtection,
         storageError,
+        avatar: await avatars.get(node.fingerprint),
     }));
     handle("chat:list-peers", () => node.listPeers().map(toApiPeer));
     handle("chat:list-contacts", (): Promise<ApiContact[]> =>
-        Promise.all(trust.list().map(async (contact) => ({ ...contact, lastMessageAt: await messages.lastMessageAt(contact.fingerprint) }))),
+        Promise.all(trust.list().map(async (contact) => ({
+            ...contact,
+            lastMessageAt: await messages.lastMessageAt(contact.fingerprint),
+            avatar: await avatars.get(contact.fingerprint),
+        }))),
     );
     handle("chat:connect", async (target) => toApiPeer(await connect(String(target))));
     handle("chat:send-text", (peerId, text): Promise<ApiMessage> => {
@@ -200,6 +223,13 @@ async function start(): Promise<void> {
         const contact = trust.list().find((c) => c.fingerprint === canonical)!;
         send({ type: "trust-changed", fingerprint: canonical, trust: contact.trust });
         return contact.trust;
+    });
+    handle("chat:set-avatar", async (avatar): Promise<string | null> => {
+        // The UI resizes and re-encodes the user's picture, but checks are only trusted here.
+        const value = avatar === null ? null : validateAvatar(avatar);
+        await avatars.save(node.fingerprint, value);
+        node.setAvatar(value);
+        return value;
     });
     handle("chat:copy-text", (text) => clipboard.writeText(String(text)));
 
@@ -228,12 +258,19 @@ async function start(): Promise<void> {
         local.close();
     });
 
+    // The app icon (apps/desktop/build/icon.png, packaged alongside dist/). Installers embed it
+    // in the executable too; this also covers running from source.
+    const icon = path.join(__dirname, "..", "..", "build", "icon.png");
+    if (process.platform === "darwin") {
+        app.dock?.setIcon(icon);
+    }
     mainWindow = new BrowserWindow({
         width: 1180,
         height: 760,
         minWidth: 860,
         minHeight: 520,
         title: `CAS P2P Chat: ${node.name}`,
+        icon,
         backgroundColor: "#121212",
         show: false,
         webPreferences: {

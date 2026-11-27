@@ -15,6 +15,13 @@ export const contacts = sqliteTable("contacts", {
     sealed: blob("sealed", { mode: "buffer" }).notNull(),
 });
 
+/** Profile pictures: our own and contacts'. */
+export const avatars = sqliteTable("avatars", {
+    /** A keyed hash of the fingerprint (its own context, unrelated to the other tables' IDs). */
+    id: blob("id", { mode: "buffer" }).primaryKey(),
+    sealed: blob("sealed", { mode: "buffer" }).notNull(),
+});
+
 export const messages = sqliteTable(
     "messages",
     {

@@ -1,19 +1,31 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { after, describe, it } from "node:test";
+import { fromUtf8, utf8 } from "../src/bytes.ts";
 import { type ChatMessage, ChatNode, type PeerSummary } from "../src/chat-node.ts";
 import { createIdentity, fingerprint } from "../src/identity.ts";
-import { PROTOCOL_ID } from "../src/protocol.ts";
+import { Handshake, PROTOCOL_ID, type Session } from "../src/protocol.ts";
 import { SqliteContactRepository } from "../src/repositories/contact-repository.ts";
 import { LocalDatabase, createStorageKey } from "../src/repositories/local-database.ts";
 import { TrustStore } from "../src/trust-store.ts";
+import { JPEG, PNG } from "./helpers/avatars.ts";
 import { linkPair } from "./helpers/memory-link.ts";
 
 const nodes: ChatNode[] = [];
 after(() => nodes.forEach((node) => node.close()));
 
-function makeNode(name: string, handshakeTimeoutMs?: number): ChatNode {
-    const node = new ChatNode({ identity: createIdentity(), name, handshakeTimeoutMs });
+async function until(check: () => boolean, timeoutMs = 5_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!check()) {
+        if (Date.now() > deadline) {
+            throw new Error("timed out");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+}
+
+function makeNode(name: string, handshakeTimeoutMs?: number, avatar?: string | null): ChatNode {
+    const node = new ChatNode({ identity: createIdentity(), name, handshakeTimeoutMs, avatar });
     nodes.push(node);
     return node;
 }
@@ -127,6 +139,106 @@ describe("ChatNode", () => {
         nodes.push(bob);
         bob.adopt(linkPair()[1], "inbound").catch(() => undefined);
         await assert.rejects(bob.adopt(linkPair()[1], "inbound"), /too many connections/);
+    });
+});
+
+/**
+ * Runs the handshake by hand against `node`, so the test can send payloads the app never would.
+ * Resolves once both sides are authenticated.
+ */
+async function rawPeer(node: ChatNode): Promise<{ send(payload: unknown): void; summary: PeerSummary; profiles: unknown[] }> {
+    const [raw, link] = linkPair();
+    const handshake = new Handshake(createIdentity(), "Raw");
+    const profiles: unknown[] = [];
+    let session: Session | null = null;
+    const opened = new Promise<Session>((resolve) => {
+        raw.start({
+            frame: (frame) => {
+                const type = (frame as { type?: unknown }).type;
+                if (type === "hello") {
+                    raw.send(handshake.receiveHello(frame));
+                } else if (type === "auth") {
+                    session = handshake.receiveAuth(frame);
+                    resolve(session);
+                } else if (type === "msg" && session) {
+                    profiles.push(JSON.parse(fromUtf8(session.open(frame))));
+                }
+            },
+            error: () => undefined,
+            closed: () => undefined,
+        });
+    });
+    raw.send(handshake.hello);
+    const [summary, s] = await Promise.all([node.adopt(link, "inbound"), opened]);
+    return { send: (payload) => raw.send(s.seal(utf8(JSON.stringify(payload)))), summary, profiles };
+}
+
+describe("avatars", () => {
+    it("each side sends its avatar when the session opens", async () => {
+        const alice = makeNode("Alice", undefined, PNG);
+        const bob = makeNode("Bob");
+        const bobGot = once(bob, "profile");
+        const aliceGot = once(alice, "profile");
+        const { inbound, outbound } = await connect(alice, bob);
+        assert.deepEqual(await bobGot, [inbound.id, PNG]);
+        assert.deepEqual(await aliceGot, [outbound.id, null], "no avatar is said explicitly, so an old one is cleared");
+    });
+
+    it("sends a changed avatar to everyone connected, and null to remove it", async () => {
+        const alice = makeNode("Alice");
+        const bob = makeNode("Bob");
+        const carol = makeNode("Carol");
+        // First the profiles sent when the sessions open (none).
+        const initial = [once(bob, "profile"), once(carol, "profile")];
+        const { inbound: atBob } = await connect(alice, bob);
+        const { inbound: atCarol } = await connect(alice, carol);
+        assert.deepEqual((await Promise.all(initial)).map(([, avatar]) => avatar), [null, null]);
+
+        const bobGot = once(bob, "profile");
+        const carolGot = once(carol, "profile");
+        alice.setAvatar(JPEG);
+        assert.deepEqual(await bobGot, [atBob.id, JPEG]);
+        assert.deepEqual(await carolGot, [atCarol.id, JPEG]);
+
+        const cleared = once(bob, "profile");
+        alice.setAvatar(null);
+        assert.deepEqual(await cleared, [atBob.id, null]);
+
+        // A peer connecting later gets the current one.
+        alice.setAvatar(PNG);
+        const dave = makeNode("Dave");
+        const daveGot = once(dave, "profile");
+        await connect(alice, dave);
+        assert.equal((await daveGot)[1], PNG);
+    });
+
+    it("ignores an avatar it can't accept, and keeps the session", async () => {
+        const bob = makeNode("Bob");
+        const profiles: Array<string | null> = [];
+        bob.on("profile", (_id, avatar) => profiles.push(avatar));
+        const messages: string[] = [];
+        bob.on("message", (_id, message) => messages.push(message.text));
+        const peer = await rawPeer(bob);
+        const hostile = [
+            "javascript:alert(1)",
+            "data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9ImFsZXJ0KDEpIi8+",
+            "data:text/html;base64,PGgxPmhpPC9oMT4=",
+            `data:image/png;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xe0]).toString("base64")}`,
+            `data:image/png;base64,${"A".repeat(200_000)}`,
+            42,
+            { src: PNG },
+        ];
+        for (const avatar of hostile) {
+            peer.send({ kind: "profile", avatar });
+        }
+        peer.send({ kind: "profile", avatar: PNG });
+        peer.send({ kind: "text", text: "still here" });
+        await until(() => messages.length === 1);
+        assert.deepEqual(profiles, [PNG], "only the valid avatar got through");
+        assert.deepEqual(messages, ["still here"]);
+        assert.equal(bob.listPeers().length, 1);
+        // Bob sent his own profile (none) once the session opened.
+        assert.deepEqual(peer.profiles, [{ kind: "profile", avatar: null }]);
     });
 });
 

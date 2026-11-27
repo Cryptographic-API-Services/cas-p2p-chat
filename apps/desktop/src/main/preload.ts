@@ -12,6 +12,7 @@ const api: ChatApi = {
     loadHistory: (fingerprint) => ipcRenderer.invoke("chat:load-history", fingerprint),
     clearHistory: (fingerprint) => ipcRenderer.invoke("chat:clear-history", fingerprint),
     setVerified: (fingerprint, verified) => ipcRenderer.invoke("chat:set-verified", fingerprint, verified),
+    setAvatar: (avatar) => ipcRenderer.invoke("chat:set-avatar", avatar),
     copyText: (text) => ipcRenderer.invoke("chat:copy-text", text),
     getServer: () => ipcRenderer.invoke("chat:get-server"),
     setServer: (url, listed) => ipcRenderer.invoke("chat:set-server", url, listed),

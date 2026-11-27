@@ -1,15 +1,85 @@
 <script setup lang="ts">
-import { mdiAccountCircleOutline, mdiContentCopy } from "@mdi/js";
-import { copyText, state } from "../store";
+import { mdiCamera, mdiContentCopy, mdiDeleteOutline, mdiImagePlus } from "@mdi/js";
+import { ref } from "vue";
+import { copyText, setAvatar, state } from "../store";
+import ProfileAvatar from "./ProfileAvatar.vue";
+
+const picker = ref<HTMLInputElement | null>(null);
+const saving = ref(false);
+
+async function onPick(): Promise<void> {
+    const input = picker.value;
+    const file = input?.files?.[0];
+    if (input) {
+        // So choosing the same file again still fires "change".
+        input.value = "";
+    }
+    if (file) {
+        await change(file);
+    }
+}
+
+async function change(file: File | null): Promise<void> {
+    saving.value = true;
+    try {
+        await setAvatar(file);
+    } finally {
+        saving.value = false;
+    }
+}
 </script>
 
 <template>
     <v-card>
-        <v-card-item :prepend-icon="mdiAccountCircleOutline">
+        <v-card-item>
+            <template #prepend>
+                <v-menu location="bottom start">
+                    <template #activator="{ props: menu }">
+                        <v-badge location="bottom end" color="primary" :icon="mdiCamera" offset-x="4" offset-y="4">
+                            <v-btn
+                                v-bind="menu"
+                                icon
+                                variant="text"
+                                :size="60"
+                                :loading="saving"
+                                data-testid="avatar-button"
+                                title="Change your photo"
+                                aria-label="Change your photo"
+                            >
+                                <ProfileAvatar data-testid="self-avatar" :avatar="state.me?.avatar" :name="state.me?.name ?? ''" :size="56" />
+                            </v-btn>
+                        </v-badge>
+                    </template>
+                    <v-list density="compact">
+                        <v-list-item :prepend-icon="mdiImagePlus" data-testid="avatar-upload" @click="picker?.click()">
+                            {{ state.me?.avatar ? "Change photo…" : "Upload a photo…" }}
+                        </v-list-item>
+                        <v-list-item
+                            v-if="state.me?.avatar"
+                            :prepend-icon="mdiDeleteOutline"
+                            data-testid="avatar-remove"
+                            @click="change(null)"
+                        >
+                            Remove photo
+                        </v-list-item>
+                    </v-list>
+                </v-menu>
+                <input
+                    ref="picker"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
+                    class="hidden"
+                    data-testid="avatar-input"
+                    @change="onPick"
+                />
+            </template>
             <v-card-title data-testid="self-name">{{ state.me?.name ?? "…" }}</v-card-title>
             <v-card-subtitle>This device</v-card-subtitle>
         </v-card-item>
         <v-card-text v-if="state.me">
+            <p class="mb-3 text-xs leading-relaxed text-muted">
+                Your photo is shown to people you chat with, sent inside the encrypted session. The server never sees it.
+            </p>
             <div class="mb-1 text-xs text-muted">Your fingerprint</div>
             <v-btn
                 block

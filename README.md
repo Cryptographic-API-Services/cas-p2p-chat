@@ -76,10 +76,14 @@ old files are deleted.
   details it relays between peers. It never logs or stores them. The public server is behind
   Cloudflare, which also sees visitors' addresses.
 - **Peers see each other's public IP**, as with any direct connection.
-- **Everything else stays on your device**, encrypted: your contacts, your settings, and the
-  messages you send and receive, in a SQLite database (`chat.sqlite`) whose rows are each
-  encrypted with AES-256-GCM-SIV. The file doesn't show names, fingerprints, message text or
-  times. Its key and your identity key are sealed with the OS keychain (Windows DPAPI, macOS
+- **Your photo**, if you add one (click your picture under "This device"), goes to everyone you
+  chat with, inside the encrypted session, never to the server. The app crops it to a small
+  square and re-encodes it, which drops metadata such as where it was taken. Peers keep the last
+  photo you sent them, and removing yours tells them to delete it the next time you chat.
+- **Everything else stays on your device**, encrypted: your contacts, your settings, your photo
+  and your contacts' photos, and the messages you send and receive, in a SQLite database
+  (`chat.sqlite`) whose rows are each encrypted with AES-256-GCM-SIV. The file doesn't show
+  names, fingerprints, photos, message text or times. Its key and your identity key are sealed with the OS keychain (Windows DPAPI, macOS
   Keychain, libsecret or kwallet on Linux). The trash-can button in a conversation deletes its
   saved messages from this device.
 

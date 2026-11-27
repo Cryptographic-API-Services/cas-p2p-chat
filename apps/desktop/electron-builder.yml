@@ -5,10 +5,15 @@ productName: CAS P2P Chat
 artifactName: cas-p2p-chat-${version}-${os}-${arch}.${ext}
 directories:
   output: release
+  # build/icon.png (1024×1024) is the app icon: electron-builder makes the Windows .ico, the
+  # macOS .icns and the Linux sizes from it.
+  buildResources: build
 files:
   - dist/**/*
   - "!**/*.tsbuildinfo"
   - package.json
+  # Also the window and taskbar icon at runtime (main.ts), on Windows and Linux.
+  - build/icon.png
   # The core package is consumed through its compiled dist/src only.
   - "!**/node_modules/@cas-p2p-chat/core/{src,test,dist/test}/**"
   - "!**/node_modules/@cas-p2p-chat/core/tsconfig.json"

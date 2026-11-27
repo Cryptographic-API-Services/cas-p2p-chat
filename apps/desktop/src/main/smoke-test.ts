@@ -3,12 +3,15 @@
 //   The real chat server (directory + PeerJS signaling, in-memory PGlite) runs as a child Node
 //   process (Node 22.18+ on PATH; npm's own Node when run through npm), and two bots join it,
 //   each with its own hidden WebRTC transport window, like separate devices:
+//   0. The app bar's menu button hides and shows the sidebar.
 //   1. "Echo Bot" is unlisted: it can't be found by name, but connecting by fingerprint works.
+//      Its avatar shows beside its name, and a photo uploaded through the file picker reaches it.
 //   2. "Remote Bot" is listed: find it by name and connect.
 //   3. Disconnect, then click the contact, which dials them again.
 //   4. Check the server's listings hold no IP address.
 //   5. Check the local database holds no message text, name or fingerprint in the clear; reload
-//      the window and check the saved history comes back; delete one contact's history.
+//      the window and check the saved history and both avatars come back; delete one contact's
+//      history; remove the photo.
 //
 // Exits 0 on success. --screenshot=<file.png> also saves the window.
 import { BrowserWindow, app } from "electron";
@@ -21,8 +24,11 @@ import { createIdentity } from "@cas-p2p-chat/core/identity";
 import { ServerSync } from "./server-sync";
 import { WebRtcBridge, acceptIncoming } from "./webrtc-bridge";
 
-function echoBot(name: string, identity = createIdentity()): ChatNode {
-    const bot = new ChatNode({ identity, name });
+/** A real 1×1 PNG: Echo Bot's avatar. */
+const BOT_AVATAR = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+function echoBot(name: string, identity = createIdentity(), avatar: string | null = null): ChatNode {
+    const bot = new ChatNode({ identity, name, avatar });
     bot.on("message", (peerId, message) => bot.sendText(peerId, `echo: ${message.text}`));
     return bot;
 }
@@ -66,13 +72,16 @@ const PAGE_HELPERS = `
 `;
 
 /** A bot "device": its own identity, chat node and hidden WebRTC transport window. */
-function device(name: string) {
+function device(name: string, avatar: string | null = null) {
     const identity = createIdentity();
-    const node = echoBot(name, identity);
+    const node = echoBot(name, identity, avatar);
+    /** The avatars this bot was sent. */
+    const avatars: Array<string | null> = [];
+    node.on("profile", (_peerId, value) => avatars.push(value));
     const bridge = new WebRtcBridge();
     acceptIncoming(bridge, node);
     const server = new ServerSync(identity, () => node.name, bridge, () => undefined);
-    return { node, bridge, server };
+    return { node, bridge, server, avatars };
 }
 
 /** Starts apps/server under Node, on a free port with an in-memory database. Resolves to its URL. */
@@ -98,7 +107,7 @@ function startServer(): Promise<{ url: string; child: ChildProcess }> {
 }
 
 export function runSmokeTest(window: BrowserWindow, screenshot: string | undefined): void {
-    const echo = device("Echo Bot");
+    const echo = device("Echo Bot", BOT_AVATAR);
     const remote = device("Remote Bot");
 
     window.webContents.once("did-finish-load", async () => {
@@ -118,6 +127,14 @@ export function runSmokeTest(window: BrowserWindow, screenshot: string | undefin
                 ${PAGE_HELPERS}
                 await until("own fingerprint", () => text("self-fingerprint"));
 
+                // 0. The app bar's menu button hides and shows the sidebar.
+                const drawerOpen = () => q("drawer").classList.contains("v-navigation-drawer--active");
+                const drawerStartedOpen = drawerOpen();
+                q("nav-toggle").click();
+                await until("the sidebar to close", () => !drawerOpen());
+                q("nav-toggle").click();
+                await until("the sidebar to open", () => drawerOpen());
+
                 fill("server-url", ${JSON.stringify(serverUrl)});
                 q("server-form").requestSubmit();
                 await until("signaling", () => text("server-status") === "online");
@@ -130,6 +147,25 @@ export function runSmokeTest(window: BrowserWindow, screenshot: string | undefin
                 q("connect-form").requestSubmit();
                 await chatWith("Echo Bot", "hello by fingerprint");
                 const echoWhere = text("peer-where");
+                const avatarImage = (testId) => document.querySelector('[data-testid="' + testId + '"] img')?.getAttribute("src") ?? null;
+                const echoAvatar = await until("Echo Bot's avatar", () => avatarImage("peer-avatar"));
+
+                // Upload a photo through the real file input: a 400×300 picture, cropped and re-encoded.
+                const canvas = document.createElement("canvas");
+                canvas.width = 400;
+                canvas.height = 300;
+                const context = canvas.getContext("2d");
+                context.fillStyle = "#2f6fde";
+                context.fillRect(0, 0, 400, 300);
+                context.fillStyle = "#ffcc00";
+                context.fillRect(150, 100, 100, 100);
+                const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+                const picked = new DataTransfer();
+                picked.items.add(new File([blob], "me.png", { type: "image/png" }));
+                const input = q("avatar-input");
+                input.files = picked.files;
+                input.dispatchEvent(new Event("change", { bubbles: true }));
+                const ownAvatar = await until("our avatar", () => avatarImage("self-avatar"));
 
                 // 2. Find Remote Bot by name and connect.
                 fill("search", "remote");
@@ -151,10 +187,17 @@ export function runSmokeTest(window: BrowserWindow, screenshot: string | undefin
                     badge: text("peer-badge"),
                     contacts: [...document.querySelectorAll('[data-testid="conversation"]')].map((e) => e.dataset.name),
                     incoming: texts("message-in"),
+                    drawerStartedOpen,
+                    echoAvatar,
+                    ownAvatar,
                 };
             })()`);
 
             // The listings the server hands out, as text: they must not contain an IP address.
+            // Echo Bot got our uploaded photo, re-encoded: a small WebP, not the PNG we picked.
+            await until("Echo Bot to get our avatar", () => echo.avatars.includes(result.ownAvatar));
+            const avatarSent = /^data:image\/webp;base64,/.test(result.ownAvatar) && result.ownAvatar.length < 30_000;
+
             const listed = ((await (await fetch(`${serverUrl}/health`)).json()) as { listed: number }).listed;
             const stored = await (await fetch(`${serverUrl}/v1/peers?q=bot`)).text();
             const storesNoIp = stored.includes("Remote Bot") && !/\b\d{1,3}(\.\d{1,3}){3}\b|::/.test(stored);
@@ -164,6 +207,9 @@ export function runSmokeTest(window: BrowserWindow, screenshot: string | undefin
                 && result.badge === "unverified"
                 && result.contacts.length === 2
                 && result.incoming.includes("echo: back again")
+                && result.drawerStartedOpen === true
+                && result.echoAvatar === BOT_AVATAR
+                && avatarSent
                 && listed === 2 // Remote Bot and this app; Echo Bot stayed unlisted
                 && storesNoIp;
 
@@ -171,7 +217,11 @@ export function runSmokeTest(window: BrowserWindow, screenshot: string | undefin
             const userData = app.getPath("userData");
             const files = fs.readdirSync(userData);
             const database = Buffer.concat(files.filter((f) => f.startsWith("chat.sqlite")).map((f) => fs.readFileSync(path.join(userData, f))));
-            const secrets = ["hello by name", "echo: back again", "Remote Bot", "Echo Bot", remote.node.fingerprint, remote.node.fingerprint.replace(/ /g, "")];
+            const ownAvatarData = result.ownAvatar.slice(result.ownAvatar.indexOf(",") + 1);
+            const secrets = [
+                "hello by name", "echo: back again", "Remote Bot", "Echo Bot", remote.node.fingerprint, remote.node.fingerprint.replace(/ /g, ""),
+                BOT_AVATAR.slice(BOT_AVATAR.indexOf(",") + 1, -4), ownAvatarData.slice(40, 120),
+            ];
             const savedEncrypted = database.length > 0
                 && secrets.every((secret) => !database.includes(secret))
                 && !files.some((f) => f === "known-peers.json" || f === "settings.json");
@@ -195,12 +245,32 @@ export function runSmokeTest(window: BrowserWindow, screenshot: string | undefin
 
                 await open("Echo Bot");
                 await until("Echo Bot's saved messages", () => texts("message-in").length > 0);
-                return { restored, echoKept: texts("message-in") };
+                const avatarImage = (testId) => document.querySelector('[data-testid="' + testId + '"] img')?.getAttribute("src") ?? null;
+                const echoAvatarKept = await until("Echo Bot's saved avatar", () => avatarImage("peer-avatar"));
+                const ownAvatarKept = await until("our saved avatar", () => avatarImage("self-avatar"));
+
+                // Remove the photo.
+                q("avatar-button").click();
+                (await until("the photo menu", () => q("avatar-remove"))).click();
+                await until("our avatar to go", () => !avatarImage("self-avatar"));
+                return { restored, echoKept: texts("message-in"), echoAvatarKept, ownAvatarKept };
             })()`);
+            await until("Echo Bot to hear the photo was removed", () => echo.avatars.at(-1) === null);
             const historyOk = ["hello by name", "back again", "echo: hello by name", "echo: back again"].every((m) => history.restored.includes(m))
-                && history.echoKept.includes("echo: hello by fingerprint");
+                && history.echoKept.includes("echo: hello by fingerprint")
+                && history.echoAvatarKept === BOT_AVATAR
+                && history.ownAvatarKept === result.ownAvatar;
             ok = ok && savedEncrypted && historyOk;
-            console.log(`smoke test ${ok ? "passed" : "FAILED"}: ${JSON.stringify({ ...result, listed, storesNoIp, savedEncrypted, ...history })}`);
+            // The avatars themselves would swamp the log; say whether they matched.
+            const { echoAvatar, ownAvatar, ...shown } = result;
+            const { echoAvatarKept, ownAvatarKept, ...shownHistory } = history;
+            const avatars = {
+                echoAvatar: echoAvatar === BOT_AVATAR,
+                avatarSent,
+                avatarsKept: echoAvatarKept === BOT_AVATAR && ownAvatarKept === ownAvatar,
+                avatarRemoved: echo.avatars.at(-1) === null,
+            };
+            console.log(`smoke test ${ok ? "passed" : "FAILED"}: ${JSON.stringify({ ...shown, listed, storesNoIp, savedEncrypted, ...shownHistory, ...avatars })}`);
 
             // A hidden window can't be captured, so show it unfocused first.
             if (ok && screenshot) {

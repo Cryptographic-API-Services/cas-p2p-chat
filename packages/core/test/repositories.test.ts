@@ -5,12 +5,14 @@ import * as path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { createIdentity, fingerprint } from "../src/identity.ts";
+import { SqliteAvatarRepository } from "../src/repositories/avatar-repository.ts";
 import { type Contact, SqliteContactRepository } from "../src/repositories/contact-repository.ts";
 import { importLegacyFiles } from "../src/repositories/legacy-files.ts";
 import { LocalDatabase, createStorageKey, parseStorageKey, serializeStorageKey } from "../src/repositories/local-database.ts";
 import { SqliteMessageRepository } from "../src/repositories/message-repository.ts";
 import { SqliteSettingsRepository } from "../src/repositories/settings-repository.ts";
 import { TrustStore } from "../src/trust-store.ts";
+import { JPEG, PNG } from "./helpers/avatars.ts";
 
 const alice = fingerprint(createIdentity().publicKey);
 const bob = fingerprint(createIdentity().publicKey);
@@ -70,9 +72,9 @@ describe("LocalDatabase", () => {
         (await open()).close();
         await open();
         const applied = raw().prepare("SELECT count(*) AS n FROM __drizzle_migrations").get() as { n: number };
-        const tables = raw().prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('settings', 'contacts', 'messages')").all();
+        const tables = raw().prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('settings', 'contacts', 'messages', 'avatars')").all();
         assert.equal(applied.n, fs.readdirSync(path.join(import.meta.dirname, "..", "drizzle")).filter((f) => f.endsWith(".sql")).length);
-        assert.equal(tables.length, 3);
+        assert.equal(tables.length, 4);
     });
 
     it("upgrades an existing database with only the new migrations, keeping its data", async () => {
@@ -218,6 +220,53 @@ describe("contacts", () => {
         assert.deepEqual(reopened.get(alice, "Alice"), { level: "verified", nameConflict: false });
         assert.deepEqual(await reopened.observe(bob, "Alice"), { level: "new", nameConflict: true }, "another key under Alice's name");
         assert.deepEqual(reopened.list().map((c) => c.name).sort(), ["Alice", "Alice"]);
+    });
+});
+
+describe("avatars", () => {
+    it("SqliteAvatarRepository saves, replaces and deletes by fingerprint, across reopening", async () => {
+        const avatars = new SqliteAvatarRepository(await open());
+        assert.equal(await avatars.get(alice), null);
+        await avatars.save(alice, PNG);
+        await avatars.save(bob, PNG);
+        await avatars.save(bob, JPEG);
+        opened[0].close();
+
+        const reopened = new SqliteAvatarRepository(await open());
+        assert.equal(await reopened.get(alice), PNG);
+        assert.equal(await reopened.get(bob), JPEG);
+        await reopened.save(alice, null);
+        assert.equal(await reopened.get(alice), null);
+        assert.equal(await reopened.get(bob), JPEG, "deleting one leaves the other");
+    });
+
+    it("writes no image or fingerprint in the clear, and can't be moved to another contact", async () => {
+        const avatars = new SqliteAvatarRepository(await open());
+        await avatars.save(alice, PNG);
+        await avatars.save(bob, JPEG);
+        opened[0].close();
+        const disk = onDisk();
+        for (const secret of [PNG.slice("data:image/png;base64,".length), "iVBORw0KGgo", alice, alice.replace(/ /g, "")]) {
+            assert.equal(disk.includes(secret), false, secret);
+        }
+        assert.equal(disk.includes(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), false, "no PNG bytes");
+
+        // Copy Alice's sealed avatar into Bob's row: it's bound to Alice's row, so Bob has none.
+        const db = raw();
+        const rows = db.prepare("SELECT id, sealed FROM avatars").all() as Array<{ id: Uint8Array; sealed: Uint8Array }>;
+        const reader = await open();
+        const ids = new Map(rows.map((row) => [Buffer.from(row.id).toString("hex"), row.sealed]));
+        assert.equal(ids.size, 2);
+        const [first, second] = [...ids.keys()];
+        db.prepare("UPDATE avatars SET sealed = ? WHERE id = ?").run(ids.get(first)!, Buffer.from(second, "hex"));
+        const after = new SqliteAvatarRepository(reader);
+        assert.deepEqual([await after.get(alice), await after.get(bob)].filter((a) => a === null).length, 1, "the overwritten row reads as no avatar");
+    });
+
+    it("refuses to save something that isn't a valid avatar", async () => {
+        const avatars = new SqliteAvatarRepository(await open());
+        await assert.rejects(avatars.save(alice, "javascript:alert(1)"), /PNG, JPEG or WebP/);
+        assert.equal(await avatars.get(alice), null);
     });
 });
 

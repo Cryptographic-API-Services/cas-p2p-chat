@@ -19,6 +19,8 @@ export interface ChatMessage {
 export interface ChatNodeOptions {
     identity: Identity;
     name: string;
+    /** Our profile picture, a data URL that passed validateAvatar, sent to every peer we connect with. */
+    avatar?: string | null;
     /** Open and handshaking connections combined. */
     maxConnections?: number;
     handshakeTimeoutMs?: number;
@@ -34,6 +36,8 @@ export interface ChatNodeEvents {
     "peer-disconnected": [peerId: string, reason: string | undefined];
     "handshake-failed": [label: string, reason: string | undefined];
     message: [peerId: string, message: ChatMessage];
+    /** A peer sent its profile picture (validated), or null to say it has none. */
+    profile: [peerId: string, avatar: string | null];
 }
 
 /**
@@ -49,10 +53,12 @@ export class ChatNode extends EventEmitter<ChatNodeEvents> {
     private readonly handshakeTimeoutMs: number;
     private nextId = 1;
     private readonly options: ChatNodeOptions;
+    private avatar: string | null;
 
     constructor(options: ChatNodeOptions) {
         super();
         this.options = options;
+        this.avatar = options.avatar ?? null;
         this.name = validateName(options.name);
         this.fingerprint = fingerprint(options.identity.publicKey);
         this.maxConnections = options.maxConnections ?? 32;
@@ -83,10 +89,13 @@ export class ChatNode extends EventEmitter<ChatNodeEvents> {
                 }
                 announced = true;
                 const summary = this.summary(id, connection);
+                // Only to a peer that passed every check: it's sent inside the encrypted session.
+                connection.sendProfile(this.avatar);
                 this.emit("peer-connected", summary);
                 resolve(summary);
             });
             connection.on("message", (text) => this.emit("message", id, { text, at: Date.now() }));
+            connection.on("profile", (avatar) => this.emit("profile", id, avatar));
             connection.on("close", (reason) => {
                 this.connections.delete(id);
                 if (announced) {
@@ -106,6 +115,19 @@ export class ChatNode extends EventEmitter<ChatNodeEvents> {
         }
         connection.sendText(validateText(text));
         return { text, at: Date.now() };
+    }
+
+    /**
+     * Changes our profile picture (a data URL that passed validateAvatar, or null for none) and
+     * sends it to every connected peer. Peers connecting later get it when their session opens.
+     */
+    setAvatar(avatar: string | null): void {
+        this.avatar = avatar;
+        for (const connection of this.connections.values()) {
+            if (connection.isOpen && connection.peer !== null) {
+                connection.sendProfile(avatar);
+            }
+        }
     }
 
     disconnect(peerId: string): void {

@@ -1,6 +1,12 @@
 // The contract between the UI and the main process, exposed as `window.chat` by the preload
 // script. Ambient (global) declarations, shared by the main process and the Vue UI.
-// Keys never cross this boundary: the UI only sees names, fingerprints and text.
+// Keys never cross this boundary: the UI only sees names, fingerprints, text and avatars.
+
+/**
+ * A profile picture: a base64 data URL of a PNG, JPEG or WebP image of at most 64 KiB, checked by
+ * the main process (validateAvatar in packages/core/src/avatar.ts) before the UI ever sees it.
+ */
+type ApiAvatar = string;
 
 type ApiTrustLevel = "new" | "known" | "verified";
 
@@ -26,6 +32,8 @@ interface ApiContact {
     lastSeen: string;
     /** When the last saved message with them was sent or received, if any. */
     lastMessageAt: number | null;
+    /** The last profile picture they sent, kept on this device; null if none. */
+    avatar: ApiAvatar | null;
     trust: ApiTrust;
 }
 
@@ -36,6 +44,8 @@ interface ApiSelf {
     keyProtection: "os" | "none";
     /** Set if the local database couldn't be opened: this run keeps nothing. */
     storageError: string | null;
+    /** This device's profile picture, sent to every peer it chats with; null if none. */
+    avatar: ApiAvatar | null;
 }
 
 interface ApiMessage {
@@ -91,6 +101,8 @@ type ApiEvent =
     | { type: "handshake-failed"; reason?: string }
     | { type: "message"; peerId: string; message: ApiMessage }
     | { type: "trust-changed"; fingerprint: string; trust: ApiTrust }
+    /** A contact sent their profile picture, or said they have none (null). */
+    | { type: "avatar-changed"; fingerprint: string; avatar: ApiAvatar | null }
     | { type: "server-changed"; server: ApiServer };
 
 interface ChatApi {
@@ -106,6 +118,11 @@ interface ChatApi {
     /** Deletes the saved messages with a contact. */
     clearHistory(fingerprint: string): Promise<void>;
     setVerified(fingerprint: string, verified: boolean): Promise<ApiTrust>;
+    /**
+     * Saves this device's profile picture (null removes it) and sends it to every connected peer;
+     * others get it when they next connect. Resolves to the avatar as saved.
+     */
+    setAvatar(avatar: ApiAvatar | null): Promise<ApiAvatar | null>;
     copyText(text: string): Promise<void>;
     getServer(): Promise<ApiServer>;
     /** Joins the server at `url` (null leaves the current one), listed by name or not. */

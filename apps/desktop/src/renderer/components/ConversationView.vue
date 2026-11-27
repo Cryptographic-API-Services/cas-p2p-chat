@@ -2,6 +2,7 @@
 import { mdiConnection, mdiDeleteOutline, mdiLinkVariantOff, mdiLockOutline, mdiSend, mdiShieldCheck, mdiShieldOffOutline } from "@mdi/js";
 import { computed, nextTick, ref, watch } from "vue";
 import { Conversation, clearHistory, connectOrToast, disconnect, send, state, toggleVerified } from "../store";
+import ProfileAvatar from "./ProfileAvatar.vue";
 import TrustChip from "./TrustChip.vue";
 
 const props = defineProps<{ conversation: Conversation }>();
@@ -14,6 +15,8 @@ const scroller = ref<HTMLElement | null>(null);
 /** A live chat session with them, not whether they're running the app. */
 const connected = computed(() => props.conversation.peer !== null);
 const verified = computed(() => props.conversation.trust.level === "verified");
+/** The last photo they sent, kept on this device, so it shows when they're not connected too. */
+const avatar = computed(() => state.avatars.get(props.conversation.fingerprint) ?? null);
 const canReconnect = computed(() => state.server.signaling === "online");
 const reconnecting = computed(() => state.connecting === props.conversation.fingerprint);
 const where = computed(() => (props.conversation.peer ? "connected (WebRTC)" : reconnecting.value ? "connecting…" : "not connected"));
@@ -65,13 +68,16 @@ watch(() => props.conversation.fingerprint, () => {
 <template>
     <div class="flex h-full flex-col">
         <v-toolbar color="surface" density="comfortable" class="flex-none border-b border-line">
-            <div class="min-w-0 px-4">
-                <div class="flex items-center gap-2">
-                    <span class="truncate text-lg font-medium" data-testid="peer-name">{{ conversation.name }}</span>
-                    <TrustChip data-testid="peer-badge" :trust="conversation.trust" :disconnected="!connected" />
-                </div>
-                <div class="text-xs text-muted">
-                    <span class="font-mono">{{ conversation.fingerprint }}</span> · <span data-testid="peer-where">{{ where }}</span>
+            <div class="flex min-w-0 items-center gap-3 px-4">
+                <ProfileAvatar data-testid="peer-avatar" :avatar="avatar" :name="conversation.name" :size="40" class="flex-none" />
+                <div class="min-w-0">
+                    <div class="flex items-center gap-2">
+                        <span class="truncate text-lg font-medium" data-testid="peer-name">{{ conversation.name }}</span>
+                        <TrustChip data-testid="peer-badge" :trust="conversation.trust" :disconnected="!connected" />
+                    </div>
+                    <div class="text-xs text-muted">
+                        <span class="font-mono">{{ conversation.fingerprint }}</span> · <span data-testid="peer-where">{{ where }}</span>
+                    </div>
                 </div>
             </div>
             <template #append>

@@ -36,6 +36,8 @@ export interface Toast {
 export const state = reactive({
     me: null as ApiSelf | null,
     conversations: new Map<string, Conversation>(),
+    /** Contacts' profile pictures by fingerprint (validated data URLs, from the main process). */
+    avatars: new Map<string, ApiAvatar>(),
     selected: null as string | null,
     server: { url: null, listed: false, signaling: "off", directory: "off", defaultUrl: "" } as ApiServer,
     /** The fingerprint being dialed, if any. */
@@ -94,7 +96,16 @@ function conversationFor(fingerprint: string, name: string, trust: ApiTrust): Co
     return conversation;
 }
 
+function setPeerAvatar(fingerprint: string, avatar: ApiAvatar | null): void {
+    if (avatar) {
+        state.avatars.set(fingerprint, avatar);
+    } else {
+        state.avatars.delete(fingerprint);
+    }
+}
+
 function addContact(contact: ApiContact): void {
+    setPeerAvatar(contact.fingerprint, contact.avatar);
     const conversation = conversationFor(contact.fingerprint, contact.name, contact.trust);
     conversation.lastActive = Math.max(conversation.lastActive, Date.parse(contact.lastSeen) || 0, contact.lastMessageAt ?? 0);
 }
@@ -175,6 +186,9 @@ function onEvent(event: ApiEvent): void {
             }
             break;
         }
+        case "avatar-changed":
+            setPeerAvatar(event.fingerprint, event.avatar);
+            break;
         case "server-changed":
             state.server = event.server;
             break;
@@ -311,6 +325,62 @@ export async function toggleVerified(conversation: Conversation): Promise<void> 
 export function disconnect(conversation: Conversation): void {
     if (conversation.peer) {
         void window.chat.disconnect(conversation.peer.id);
+    }
+}
+
+/** The side of the square avatar sent to peers, in pixels: sharp at 2× in an 80 px circle. */
+const AVATAR_SIZE = 160;
+/** The main process's limit (MAX_AVATAR_BYTES in packages/core/src/avatar.ts), on the base64 text. */
+const MAX_AVATAR_LENGTH = Math.floor((64 * 1024 * 4) / 3);
+/** Files larger than this aren't even decoded. */
+const MAX_PICTURE_FILE_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Turns the user's picture into an avatar: the centre square, scaled to AVATAR_SIZE and
+ * re-encoded as WebP. Re-encoding drops everything but the pixels, such as EXIF location.
+ */
+async function toAvatar(file: File): Promise<ApiAvatar> {
+    if (!file.type.startsWith("image/")) {
+        throw new Error("choose an image file (PNG, JPEG, WebP, GIF or BMP)");
+    }
+    if (file.size > MAX_PICTURE_FILE_BYTES) {
+        throw new Error("that picture is larger than 25 MB");
+    }
+    let bitmap: ImageBitmap;
+    try {
+        bitmap = await createImageBitmap(file);
+    } catch {
+        throw new Error("that file couldn't be read as a picture");
+    }
+    try {
+        const side = Math.min(bitmap.width, bitmap.height);
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = AVATAR_SIZE;
+        const context = canvas.getContext("2d")!;
+        context.imageSmoothingQuality = "high";
+        context.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, AVATAR_SIZE, AVATAR_SIZE);
+        for (const quality of [0.85, 0.7, 0.5]) {
+            const url = canvas.toDataURL("image/webp", quality);
+            if (url.length - url.indexOf(",") - 1 <= MAX_AVATAR_LENGTH) {
+                return url;
+            }
+        }
+        throw new Error("that picture is too detailed to make a small enough avatar");
+    } finally {
+        bitmap.close();
+    }
+}
+
+/** Sets this device's avatar from a picture the user chose, or removes it with null. */
+export async function setAvatar(file: File | null): Promise<void> {
+    try {
+        const saved = await window.chat.setAvatar(file ? await toAvatar(file) : null);
+        if (state.me) {
+            state.me.avatar = saved;
+        }
+        toast(saved ? "Photo saved. People you chat with will see it." : "Photo removed.", "success");
+    } catch (err) {
+        toast(`Photo not changed: ${errorText(err)}`, "error");
     }
 }
 

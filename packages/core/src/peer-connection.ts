@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { validateAvatar } from "./avatar.ts";
 import { type Bytes, fromUtf8, utf8 } from "./bytes.ts";
 import { ProtocolError } from "./errors.ts";
 import type { FrameLink } from "./frame-link.ts";
@@ -13,6 +14,8 @@ export type Direction = "inbound" | "outbound";
 export interface PeerConnectionEvents {
     open: [peer: PeerIdentity];
     message: [text: string];
+    /** The peer's profile picture (a validated data URL), or null if they have none. */
+    profile: [avatar: string | null];
     close: [reason: string | undefined];
 }
 
@@ -31,8 +34,20 @@ function frameType(frame: unknown): unknown {
     return typeof frame === "object" && frame !== null ? (frame as { type?: unknown }).type : undefined;
 }
 
-/** Decodes a decrypted payload. Unknown kinds (from a newer version) are ignored. */
-function parsePayload(bytes: Bytes): string | null {
+/**
+ * What a sealed message carries:
+ *   { kind: "text", text }      a chat message
+ *   { kind: "profile", avatar } the sender's profile picture (a data URL), or null for none; sent
+ *                               when a session opens and whenever it changes
+ */
+type Payload = { kind: "text"; text: string } | { kind: "profile"; avatar: string | null };
+
+/**
+ * Decodes a decrypted payload. Unknown kinds (from a newer version) are ignored, so a new kind
+ * that older peers can safely ignore needs no PROTOCOL_ID bump. So is an avatar this version
+ * can't accept (another format, or larger): the one we have stays.
+ */
+function parsePayload(bytes: Bytes): Payload | null {
     let payload: unknown;
     try {
         payload = JSON.parse(fromUtf8(bytes));
@@ -42,12 +57,22 @@ function parsePayload(bytes: Bytes): string | null {
     if (typeof payload !== "object" || payload === null) {
         throw new ProtocolError("payload must be a JSON object");
     }
-    const fields = payload as { kind?: unknown; text?: unknown };
+    const fields = payload as { kind?: unknown; text?: unknown; avatar?: unknown };
+    if (fields.kind === "profile") {
+        if (fields.avatar === null) {
+            return { kind: "profile", avatar: null };
+        }
+        try {
+            return { kind: "profile", avatar: validateAvatar(fields.avatar) };
+        } catch {
+            return null;
+        }
+    }
     if (fields.kind !== "text") {
         return null;
     }
     try {
-        return validateText(fields.text);
+        return { kind: "text", text: validateText(fields.text) };
     } catch (err) {
         throw new ProtocolError(`invalid text message: ${(err as Error).message}`);
     }
@@ -94,11 +119,19 @@ export class PeerConnection extends EventEmitter<PeerConnectionEvents> {
     }
 
     sendText(text: string): void {
+        this.sendPayload({ kind: "text", text: validateText(text) });
+    }
+
+    /** Sends our profile picture (already validated), or null for none. */
+    sendProfile(avatar: string | null): void {
+        this.sendPayload({ kind: "profile", avatar });
+    }
+
+    private sendPayload(payload: Payload): void {
         if (!this.session || this.closed) {
             throw new Error("not connected");
         }
-        const payload = utf8(JSON.stringify({ kind: "text", text: validateText(text) }));
-        this.link.send(this.session.seal(payload));
+        this.link.send(this.session.seal(utf8(JSON.stringify(payload))));
     }
 
     /** Closes the connection. With notifyPeer, first tells the peer why. */
@@ -157,9 +190,11 @@ export class PeerConnection extends EventEmitter<PeerConnectionEvents> {
             return;
         }
 
-        const text = parsePayload(this.session!.open(frame));
-        if (text !== null) {
-            this.emit("message", text);
+        const payload = parsePayload(this.session!.open(frame));
+        if (payload?.kind === "text") {
+            this.emit("message", payload.text);
+        } else if (payload?.kind === "profile") {
+            this.emit("profile", payload.avatar);
         }
     }
 }
