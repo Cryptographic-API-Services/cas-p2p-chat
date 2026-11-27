@@ -1,0 +1,6 @@
+{
+  // Lets editors find the renderer's real config (tsconfig.renderer.json) as the nearest
+  // tsconfig.json for files under src/renderer; vue-tsc is still invoked with -p tsconfig.renderer.json.
+  "extends": "../../tsconfig.renderer.json",
+  "include": ["**/*.ts", "**/*.vue", "../shared/**/*.d.ts"]
+}

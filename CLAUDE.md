@@ -166,6 +166,11 @@ deploy/azure/         setup.sh (Azure CLI: resource group, identity, registry, C
   - A new source folder must be added to the right tsconfig's `include`.
 - **TypeScript is pinned to 6.0.** TypeScript 7 has no JavaScript API, and `vue-tsc` needs one.
   Don't upgrade until `vue-tsc` supports TypeScript 7.
+- **Editor setup.** `.vscode/settings.json` turns off `typescript.experimental.useTsgo` for this
+  workspace: TypeScript 7 can't load tsserver plugins, and the Vue extension needs
+  `@vue/typescript-plugin` for go-to-definition and types in `.vue` files.
+  `apps/desktop/src/renderer/tsconfig.json` only extends `tsconfig.renderer.json`, so editors
+  find the renderer's config as the nearest `tsconfig.json` instead of the main process's.
 - Under `nodenext`, dynamic `import()` in main-process code is real ESM and needs a `.js`
   extension (`await import("./smoke-test.js")`). Static imports don't.
 - **Database.** PostgreSQL through Drizzle. `openDatabase(DATABASE_URL)` picks node-postgres for
