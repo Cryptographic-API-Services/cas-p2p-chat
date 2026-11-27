@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { after, describe, it } from "node:test";
 import { type ChatMessage, ChatNode, type PeerSummary } from "../src/chat-node.ts";
 import { createIdentity, fingerprint } from "../src/identity.ts";
+import { PROTOCOL_ID } from "../src/protocol.ts";
 import { SqliteContactRepository } from "../src/repositories/contact-repository.ts";
 import { LocalDatabase, createStorageKey } from "../src/repositories/local-database.ts";
 import { TrustStore } from "../src/trust-store.ts";
@@ -106,7 +107,7 @@ describe("ChatNode", () => {
         const failed = once(bob, "handshake-failed");
         bob.adopt(b, "inbound").catch(() => undefined);
         raw.start({ frame: () => undefined, error: () => undefined, closed: () => undefined });
-        raw.send({ type: "hello", protocol: "cas-p2p-chat/1", name: "Eve", identityKey: "AAAA" });
+        raw.send({ type: "hello", protocol: PROTOCOL_ID, name: "Eve", identityKey: "AAAA" });
         const [, reason] = await failed;
         assert.match(String(reason), /identityKey must be 32 bytes/);
     });

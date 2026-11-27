@@ -106,8 +106,8 @@ function upsertPeer(peer: ApiPeer): Conversation {
         const how = peer.direction === "inbound" ? "they connected to you" : "you connected to them";
         conversation.lines.push({
             kind: "system",
-            text: `Secure session started (${how}, over WebRTC). Fresh X25519 session keys, HPKE with ` +
-                `AES-256-GCM, and every message signed with Ed25519.`,
+            text: `Secure session started (${how}, over WebRTC). Fresh X25519 + ML-KEM-1024 session keys ` +
+                `(post-quantum hybrid), signed with Ed25519, and AES-256-GCM for every message.`,
             at: Date.now(),
         });
     }

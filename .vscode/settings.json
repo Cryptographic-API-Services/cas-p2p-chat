@@ -1,0 +1,5 @@
+{
+  // TypeScript 7 (tsgo) can't load tsserver plugins, and the Vue extension needs
+  // @vue/typescript-plugin for go-to-definition and types in .vue files.
+  "typescript.experimental.useTsgo": false
+}

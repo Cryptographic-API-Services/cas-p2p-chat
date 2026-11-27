@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { hkdfSync, randomBytes } from "node:crypto";
 import { describe, it } from "node:test";
+import { HkdfWrapper } from "cas-typescript-sdk";
 import { fromBase64, toBase64, utf8, fromUtf8 } from "../src/bytes.ts";
 import { ProtocolError } from "../src/errors.ts";
 import { createIdentity, fingerprint, parseIdentity, serializeIdentity } from "../src/identity.ts";
-import { Handshake, type MessageFrame, Session } from "../src/protocol.ts";
+import { type AuthFrame, Handshake, type MessageFrame, Session } from "../src/protocol.ts";
 
 function establish(): { alice: Session; bob: Session; aliceId: ReturnType<typeof createIdentity>; bobId: ReturnType<typeof createIdentity> } {
     const aliceId = createIdentity();
@@ -15,12 +17,26 @@ function establish(): { alice: Session; bob: Session; aliceId: ReturnType<typeof
     return { alice: a.receiveAuth(bAuth), bob: b.receiveAuth(aAuth), aliceId, bobId };
 }
 
-/** Flips one bit of a base64 field. */
-function flip(frame: MessageFrame, field: "ciphertext" | "tag" | "encapsulatedKey" | "signature"): MessageFrame {
+/** Flips one bit of a base64 field, at the given byte (negative counts from the end). */
+function flip<T extends MessageFrame | AuthFrame>(frame: T, field: keyof T & string, at = 0): T {
     const bytes = fromBase64(frame[field], field);
-    bytes[0] ^= 0x01;
+    bytes[at < 0 ? bytes.length + at : at] ^= 0x01;
     return { ...frame, [field]: toBase64(bytes) };
 }
+
+describe("HKDF-SHA512 (the key schedule's KDF)", () => {
+    it("cas-typescript-sdk's extract + expand matches node:crypto's RFC 5869 HKDF", () => {
+        const hkdf = new HkdfWrapper();
+        // The key schedule's shapes (64-byte salt, 32-byte keys) plus no salt and multi-block output.
+        for (const [saltLength, length] of [[64, 32], [0, 64], [13, 100], [64, 200]]) {
+            const salt = Array.from(randomBytes(saltLength));
+            const ikm = Array.from(randomBytes(97));
+            const info = Array.from(randomBytes(40));
+            const expected = Array.from(new Uint8Array(hkdfSync("sha512", Buffer.from(ikm), Buffer.from(salt), Buffer.from(info), length)));
+            assert.deepEqual(hkdf.hkdfSha512Expand(hkdf.hkdfSha512Extract(salt, ikm), info, length), expected);
+        }
+    });
+});
 
 describe("identity", () => {
     it("round-trips through serialization", () => {
@@ -70,6 +86,40 @@ describe("handshake", () => {
         assert.throws(() => alice.receiveAuth(malloryAuth), /handshake signature is invalid/);
     });
 
+    it("rejects a man in the middle who swaps in their own ML-KEM key", () => {
+        const alice = new Handshake(createIdentity(), "Alice");
+        const bob = new Handshake(createIdentity(), "Bob");
+        const mallory = new Handshake(createIdentity(), "Mallory");
+        // Bob would encapsulate to Mallory's KEM key, so she'd learn the post-quantum secret.
+        const bobAuth = bob.receiveHello({ ...alice.hello, kemKey: mallory.hello.kemKey });
+        alice.receiveHello(bob.hello);
+        assert.throws(() => alice.receiveAuth(bobAuth), /handshake signature is invalid/);
+    });
+
+    it("rejects an auth whose KEM ciphertext was replaced or modified", () => {
+        const alice = new Handshake(createIdentity(), "Alice");
+        const bob = new Handshake(createIdentity(), "Bob");
+        const mallory = new Handshake(createIdentity(), "Mallory");
+        alice.receiveHello(bob.hello);
+        const bobAuth = bob.receiveHello(alice.hello);
+        // Mallory encapsulates her own secret to Alice and splices it into Bob's auth.
+        const malloryAuth = mallory.receiveHello(alice.hello);
+        assert.throws(() => alice.receiveAuth({ ...bobAuth, kemCiphertext: malloryAuth.kemCiphertext }), /signature is invalid/);
+        assert.throws(() => alice.receiveAuth(flip(bobAuth, "kemCiphertext", -1)), /signature is invalid/);
+        assert.throws(() => alice.receiveAuth({ ...bobAuth, kemCiphertext: toBase64([1, 2, 3]) }), /kemCiphertext must be 1568 bytes/);
+        // The genuine auth still works afterwards.
+        assert.equal(alice.receiveAuth(bobAuth).peer.name, "Bob");
+    });
+
+    it("puts the KEM key and ciphertext on the wire, but no secrets", () => {
+        const alice = new Handshake(createIdentity(), "Alice");
+        const bob = new Handshake(createIdentity(), "Bob");
+        assert.equal(fromBase64(alice.hello.kemKey, "kemKey").length, 1568);
+        const auth = alice.receiveHello(bob.hello);
+        assert.deepEqual(Object.keys(auth).sort(), ["kemCiphertext", "signature", "type"]);
+        assert.deepEqual(Object.keys(alice.hello).sort(), ["challenge", "identityKey", "kemKey", "name", "protocol", "sessionKey", "type"]);
+    });
+
     it("rejects a hello carrying our own identity (reflection)", () => {
         const identity = createIdentity();
         const a = new Handshake(identity, "Alice");
@@ -96,6 +146,9 @@ describe("handshake", () => {
             [{ ...good, protocol: "other/9" }, /speaks other\/9/],
             [{ ...good, identityKey: toBase64([1, 2, 3]) }, /identityKey must be 32 bytes/],
             [{ ...good, sessionKey: "not base64!" }, /sessionKey must be a base64 string/],
+            [{ ...good, kemKey: toBase64(new Array(1567).fill(7)) }, /kemKey must be 1568 bytes/],
+            [{ ...good, kemKey: undefined }, /kemKey must be a base64 string/],
+            [{ ...good, protocol: "cas-p2p-chat/1" }, /speaks cas-p2p-chat\/1, not cas-p2p-chat\/2/],
             [{ ...good, name: "" }, /name must be/],
             [{ ...good, name: "Bob‮evil" }, /invisible formatting/],
             [{ ...good, type: "auth" }, /expected a hello frame/],
@@ -103,6 +156,7 @@ describe("handshake", () => {
         for (const [frame, error] of cases) {
             assert.throws(() => new Handshake(createIdentity(), "Alice").receiveHello(frame), error);
         }
+        assert.throws(() => a.receiveHello({ ...good, kemKey: a.hello.kemKey }), /echoed our handshake values/);
         assert.throws(() => a.receiveAuth({ type: "auth", signature: "" }), /auth before hello/);
     });
 });
@@ -122,12 +176,31 @@ describe("session messages", () => {
         assert.ok(!Buffer.from(frame).includes(Buffer.from("attack at dawn")));
     });
 
-    for (const field of ["ciphertext", "tag", "encapsulatedKey", "signature"] as const) {
-        it(`rejects a message with a modified ${field}`, () => {
+    it("sends only seq and AES-256-GCM ciphertext plus tag, with no nonce or signature", () => {
+        const { alice } = establish();
+        const frame = alice.seal(utf8("hello"));
+        assert.deepEqual(Object.keys(frame).sort(), ["ciphertext", "seq", "type"]);
+        assert.equal(fromBase64(frame.ciphertext, "ciphertext").length, 5 + 16);
+    });
+
+    for (const [where, at] of [["ciphertext", 0], ["tag", -1]] as const) {
+        it(`rejects a message with a modified ${where}`, () => {
             const { alice, bob } = establish();
-            assert.throws(() => bob.open(flip(alice.seal(utf8("hello")), field)), ProtocolError);
+            assert.throws(() => bob.open(flip(alice.seal(utf8("hello")), "ciphertext", at)), /failed to decrypt/);
         });
     }
+
+    it("rejects a truncated message", () => {
+        const { alice, bob } = establish();
+        assert.throws(() => bob.open({ ...alice.seal(utf8("hello")), ciphertext: toBase64(new Array(15).fill(0)) }), /too short/);
+    });
+
+    it("uses a different key in each direction, so a message can't be reflected to its sender", () => {
+        const { alice, bob } = establish();
+        assert.throws(() => alice.open(alice.seal(utf8("echo"))), /failed to decrypt/);
+        // Same seq, same session, other direction: still distinct ciphertexts.
+        assert.notEqual(alice.seal(utf8("same")).ciphertext, bob.seal(utf8("same")).ciphertext);
+    });
 
     it("rejects replayed, skipped and reordered messages", () => {
         const { alice, bob } = establish();
@@ -143,8 +216,8 @@ describe("session messages", () => {
         const { alice, bob } = establish();
         alice.seal(utf8("dropped"));
         const second = alice.seal(utf8("two"));
-        // Claiming to be message #0 doesn't help: seq is bound into the AAD and signature.
-        assert.throws(() => bob.open({ ...second, seq: 0 }), /signature is invalid/);
+        // Claiming to be message #0 doesn't help: seq is bound into the nonce and AAD.
+        assert.throws(() => bob.open({ ...second, seq: 0 }), /failed to decrypt/);
     });
 
     it("rejects a message from another session between the same identities", () => {
@@ -165,8 +238,8 @@ describe("session messages", () => {
     it("rejects a message sealed by someone other than the authenticated peer", () => {
         const { alice, bob } = establish();
         const { alice: mallory } = establish();
-        // Mallory's frame is well-formed but signed with Mallory's identity, for another session.
-        assert.throws(() => bob.open(mallory.seal(utf8("I am Alice"))), /signature is invalid/);
+        // Mallory's frame is well-formed, but sealed under her own session's key.
+        assert.throws(() => bob.open(mallory.seal(utf8("I am Alice"))), /failed to decrypt/);
         assert.equal(fromUtf8(bob.open(alice.seal(utf8("real")))), "real");
     });
 

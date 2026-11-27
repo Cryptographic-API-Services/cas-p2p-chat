@@ -19,7 +19,7 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "cas-typescript-sdk": "^2.0.0",
+    "cas-typescript-sdk": "^2.1.0",
     "drizzle-orm": "^0.45.4"
   },
   "devDependencies": {
