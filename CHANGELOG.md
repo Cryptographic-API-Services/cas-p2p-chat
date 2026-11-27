@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.0](https://github.com/Cryptographic-API-Services/cas-p2p-chat/compare/v0.3.0...v1.0.0) (2026-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* post-quantum hybrid key exchange (X25519 + ML-KEM-1024) ([#5](https://github.com/Cryptographic-API-Services/cas-p2p-chat/issues/5))
+
+### Added
+
+* post-quantum hybrid key exchange (X25519 + ML-KEM-1024) ([#5](https://github.com/Cryptographic-API-Services/cas-p2p-chat/issues/5)) ([956af38](https://github.com/Cryptographic-API-Services/cas-p2p-chat/commit/956af381fa81b366083d25173a3302ba66b313ab))
+
 ## [0.3.0](https://github.com/Cryptographic-API-Services/cas-p2p-chat/compare/v0.2.0...v0.3.0) (2026-11-26)
 
 
