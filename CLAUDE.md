@@ -388,6 +388,10 @@ deploy/azure/         setup.sh (Azure CLI: resource group, identity, registry, C
   CSS imported (`main.ts`). Tailwind colors come from Vuetify theme variables and use distinct
   names (`brand`, `on-brand`, `bubble`, `muted`, `line`). Don't name one `primary`, `surface`,
   etc., because those collide with classes Vuetify generates.
+- The palette lives in `apps/desktop/src/renderer/plugins/vuetify.ts` and comes from the project's
+  GitHub avatar: teal primary in light mode, glowing cyan on navy in dark mode, royal navy /
+  palm-cyan as `secondary`. Change colors there, not in components, and keep text pairs at
+  WCAG AA (4.5:1) or better.
 - The CSP in `index.html` allows inline styles (Vuetify injects its theme `<style>`), but
   scripts are `'self'` only. Don't add anything that needs `eval` or inline scripts.
 - Icons are `@mdi/js` SVG paths (`:icon="mdiSend"`), bundled with the app, never fetched.
